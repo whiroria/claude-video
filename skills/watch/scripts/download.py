@@ -4,6 +4,7 @@
 Also fetches subtitles (manual first, then auto-generated) in VTT format so
 transcribe.py can parse them without needing Whisper.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,13 +48,26 @@ def resolve_local(path: str) -> dict:
     }
 
 
-def _pick_subtitle(out_dir: Path) -> Path | None:
+def _pick_subtitle(out_dir: Path, sub_langs: str | None = None) -> Path | None:
     candidates = sorted(out_dir.glob("video*.vtt"))
     if not candidates:
         return None
+    if sub_langs:
+        import re
+
+        for pattern in sub_langs.split(","):
+            for candidate in candidates:
+                language = candidate.name[len("video.") : -len(".vtt")]
+                if re.fullmatch(pattern.strip(), language):
+                    return candidate
     priorities = (
-        ".ja.", ".ja-JP.", ".ja-orig.",
-        ".en.", ".en-US.", ".en-GB.", ".en-orig.",
+        ".ja.",
+        ".ja-JP.",
+        ".ja-orig.",
+        ".en.",
+        ".en-US.",
+        ".en-GB.",
+        ".en-orig.",
     )
     for marker in priorities:
         match = next((c for c in candidates if marker in c.name), None)
@@ -85,17 +99,21 @@ def fetch_captions(url: str, out_dir: Path, sub_langs: str | None = None) -> dic
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", _sub_langs(sub_langs),
-        "--sub-format", "vtt",
-        "--convert-subs", "vtt",
+        "--sub-langs",
+        _sub_langs(sub_langs),
+        "--sub-format",
+        "vtt",
+        "--convert-subs",
+        "vtt",
         "--no-playlist",
         "--ignore-errors",
-        "-o", output_template,
+        "-o",
+        output_template,
         "--",
         url,
     ]
     subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr)
-    subtitle = _pick_subtitle(out_dir)
+    subtitle = _pick_subtitle(out_dir, _sub_langs(sub_langs))
     info = _read_info(out_dir / "video.info.json", url)
     return {
         "video_path": None,
@@ -111,6 +129,10 @@ def _read_info(info_path: Path, url: str) -> dict:
         try:
             raw = json.loads(info_path.read_text(encoding="utf-8"))
             info = {
+                "id": raw.get("id"),
+                "timestamp": raw.get("timestamp"),
+                "channel_url": raw.get("channel_url"),
+                "chapters": raw.get("chapters"),
                 "title": raw.get("title"),
                 "uploader": raw.get("uploader") or raw.get("channel"),
                 "channel_id": raw.get("channel_id"),
@@ -146,18 +168,25 @@ def download_url(
     fmt = "ba/bestaudio" if audio_only else "bv*[height<=720]+ba/b[height<=720]/bv+ba/b"
     cmd = [
         "yt-dlp",
-        "-N", "8",
-        "-f", fmt,
-        "--merge-output-format", "mp4",
+        "-N",
+        "8",
+        "-f",
+        fmt,
+        "--merge-output-format",
+        "mp4",
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", _sub_langs(sub_langs),
-        "--sub-format", "vtt",
-        "--convert-subs", "vtt",
+        "--sub-langs",
+        _sub_langs(sub_langs),
+        "--sub-format",
+        "vtt",
+        "--convert-subs",
+        "vtt",
         "--no-playlist",
         "--ignore-errors",
-        "-o", output_template,
+        "-o",
+        output_template,
         "--",
         url,
     ]
@@ -169,7 +198,7 @@ def download_url(
             f"yt-dlp did not produce a video file in {out_dir} (exit {result.returncode})"
         )
 
-    subtitle = _pick_subtitle(out_dir)
+    subtitle = _pick_subtitle(out_dir, _sub_langs(sub_langs))
     info = _read_info(out_dir / "video.info.json", url)
 
     return {

@@ -1,0 +1,5 @@
+# Data model
+
+SQLite migration v2 adds tables without dropping legacy analyses. channels → videos → analysis_runs; run-owned tables include timeline_events, transcripts, words, shots, visual_segments, audio_events, beats, chapters, video_features, model_analyses. performance_snapshots and vseo_snapshots belong to videos. Foreign keys cascade only through an explicitly requested video deletion. The legacy table is preserved and not auto-imported: old records lack trustworthy media identities and provenance.
+
+YouTube IDs are canonical yt: IDs; local IDs are SHA-256 content hashes. Other URL media use a content hash. Reanalysis adds runs and snapshots. Features store numeric value or null together with status, unit, kind and provenance JSON. Zero is a measured zero. SQL null is a storage representation, not a reason: reason is status (unknown, not_available, not_applicable, analysis_failed, not_analyzed, null). Exports choose the latest run per video and retain status/provenance to avoid multiplying samples or pooling incompatible methods.

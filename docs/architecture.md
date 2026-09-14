@@ -1,0 +1,5 @@
+# Architecture
+
+Keep all runtime modules under skills/watch/scripts so skill installation remains self-contained. Root analyze.py only delegates. Existing watch.py remains unchanged. vea.pipeline orchestrates ingestion → event/feature normalization → optional semantic analysis → transactional storage. vea.models defines data contracts; vea.extractors contains reproducible FFmpeg measurements; vea.backends defines replaceable model interfaces; vea.performance derives timestamped metrics; vea.database stores research data; vea.cli supports single/batch/export/snapshot/delete.
+
+Backends do not write SQL. A run owns all events, features and model results. Videos persist independently of runs. Metadata counts are observations and belong to snapshots. User transcript timing is only used when explicitly supplied (VTT); plain text does not get fabricated timestamps. An extractor failure marks only that module failed. Invalid/unavailable video is fatal. Evidence files remain in the run work directory; moving/deleting that directory invalidates references.

@@ -1,4 +1,5 @@
 """OpenAI Responses API client for Video Essay Analyzer."""
+
 from __future__ import annotations
 
 import base64
@@ -52,6 +53,7 @@ def _build_user_content(
     transcript: str | None,
     frame_paths: list[str],
     thumbnail_path: str | None,
+    thumbnail_url: str | None = None,
     output_language: str,
 ) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = []
@@ -70,22 +72,32 @@ def _build_user_content(
             else "No visual images are attached."
         ),
     }
-    content.append({
-        "type": "input_text",
-        "text": json.dumps(text_payload, ensure_ascii=False),
-    })
+    content.append(
+        {
+            "type": "input_text",
+            "text": json.dumps(text_payload, ensure_ascii=False),
+        }
+    )
     if thumbnail_path:
-        content.append({
-            "type": "input_image",
-            "image_url": _image_data_url(thumbnail_path),
-            "detail": "high",
-        })
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": _image_data_url(thumbnail_path),
+                "detail": "high",
+            }
+        )
+    if thumbnail_url and not thumbnail_path:
+        content.append(
+            {"type": "input_image", "image_url": thumbnail_url, "detail": "high"}
+        )
     for frame_path in frame_paths:
-        content.append({
-            "type": "input_image",
-            "image_url": _image_data_url(frame_path),
-            "detail": "low",
-        })
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": _image_data_url(frame_path),
+                "detail": "low",
+            }
+        )
     return content
 
 
@@ -95,10 +107,13 @@ def analyze_with_openai(
     transcript: str | None,
     frame_paths: list[str],
     thumbnail_path: str | None = None,
+    thumbnail_url: str | None = None,
     output_language: str = "ja",
     model: str = DEFAULT_MODEL,
     api_key: str | None = None,
     timeout: int = 180,
+    schema: dict | None = None,
+    instructions: str | None = None,
 ) -> dict[str, Any]:
     key = api_key or load_openai_api_key()
     if not key:
@@ -109,7 +124,7 @@ def analyze_with_openai(
 
     payload = {
         "model": model,
-        "instructions": ANALYSIS_INSTRUCTIONS,
+        "instructions": instructions or ANALYSIS_INSTRUCTIONS,
         "input": [
             {
                 "role": "user",
@@ -118,6 +133,7 @@ def analyze_with_openai(
                     transcript=transcript,
                     frame_paths=frame_paths,
                     thumbnail_path=thumbnail_path,
+                    thumbnail_url=thumbnail_url,
                     output_language=output_language,
                 ),
             }
@@ -127,7 +143,7 @@ def analyze_with_openai(
                 "type": "json_schema",
                 "name": "video_essay_analysis",
                 "strict": True,
-                "schema": VIDEO_ESSAY_SCHEMA,
+                "schema": schema or VIDEO_ESSAY_SCHEMA,
             }
         },
     }
