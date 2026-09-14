@@ -7,6 +7,7 @@ transcribe.py can parse them without needing Whisper.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,11 @@ from urllib.parse import urlparse
 
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".wmv"}
+DEFAULT_SUB_LANGS = "ja.*,en.*"
+
+
+def _sub_langs(value: str | None = None) -> str:
+    return (value or os.environ.get("WATCH_SUB_LANGS") or DEFAULT_SUB_LANGS).strip()
 
 
 def is_url(source: str) -> bool:
@@ -45,11 +51,15 @@ def _pick_subtitle(out_dir: Path) -> Path | None:
     candidates = sorted(out_dir.glob("video*.vtt"))
     if not candidates:
         return None
-    preferred = [
-        c for c in candidates
-        if any(marker in c.name for marker in (".en.", ".en-US.", ".en-GB.", ".en-orig."))
-    ]
-    return preferred[0] if preferred else candidates[0]
+    priorities = (
+        ".ja.", ".ja-JP.", ".ja-orig.",
+        ".en.", ".en-US.", ".en-GB.", ".en-orig.",
+    )
+    for marker in priorities:
+        match = next((c for c in candidates if marker in c.name), None)
+        if match:
+            return match
+    return candidates[0]
 
 
 def _pick_video(out_dir: Path) -> Path | None:
@@ -62,7 +72,7 @@ def _pick_video(out_dir: Path) -> Path | None:
     return None
 
 
-def fetch_captions(url: str, out_dir: Path) -> dict:
+def fetch_captions(url: str, out_dir: Path, sub_langs: str | None = None) -> dict:
     """Fetch metadata and best available VTT captions without downloading video."""
     if shutil.which("yt-dlp") is None:
         raise SystemExit("yt-dlp is not installed. Install with: brew install yt-dlp")
@@ -75,7 +85,7 @@ def fetch_captions(url: str, out_dir: Path) -> dict:
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", "en.*",
+        "--sub-langs", _sub_langs(sub_langs),
         "--sub-format", "vtt",
         "--convert-subs", "vtt",
         "--no-playlist",
@@ -103,8 +113,17 @@ def _read_info(info_path: Path, url: str) -> dict:
             info = {
                 "title": raw.get("title"),
                 "uploader": raw.get("uploader") or raw.get("channel"),
+                "channel_id": raw.get("channel_id"),
                 "duration": raw.get("duration"),
                 "url": raw.get("webpage_url") or url,
+                "upload_date": raw.get("upload_date"),
+                "view_count": raw.get("view_count"),
+                "like_count": raw.get("like_count"),
+                "comment_count": raw.get("comment_count"),
+                "description": raw.get("description"),
+                "categories": raw.get("categories"),
+                "tags": raw.get("tags"),
+                "thumbnail_url": raw.get("thumbnail"),
             }
         except Exception as exc:
             print(f"[watch] info.json parse failed: {exc}", file=sys.stderr)
@@ -116,6 +135,7 @@ def download_url(
     url: str,
     out_dir: Path,
     audio_only: bool = False,
+    sub_langs: str | None = None,
 ) -> dict:
     if shutil.which("yt-dlp") is None:
         raise SystemExit("yt-dlp is not installed. Install with: brew install yt-dlp")
@@ -132,7 +152,7 @@ def download_url(
         "--write-info-json",
         "--write-subs",
         "--write-auto-subs",
-        "--sub-langs", "en.*",
+        "--sub-langs", _sub_langs(sub_langs),
         "--sub-format", "vtt",
         "--convert-subs", "vtt",
         "--no-playlist",
@@ -142,8 +162,6 @@ def download_url(
         url,
     ]
 
-    # yt-dlp may exit non-zero if a subtitle variant fails (e.g. 429) even when
-    # the video itself downloaded fine. Treat "video file present" as success.
     result = subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr)
     video = _pick_video(out_dir)
     if video is None:
@@ -166,9 +184,10 @@ def download(
     source: str,
     out_dir: Path,
     audio_only: bool = False,
+    sub_langs: str | None = None,
 ) -> dict:
     if is_url(source):
-        return download_url(source, out_dir, audio_only=audio_only)
+        return download_url(source, out_dir, audio_only=audio_only, sub_langs=sub_langs)
     return resolve_local(source)
 
 
@@ -177,4 +196,4 @@ if __name__ == "__main__":
         print("usage: download.py <url-or-path> <out-dir>", file=sys.stderr)
         raise SystemExit(2)
     result = download(sys.argv[1], Path(sys.argv[2]))
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
