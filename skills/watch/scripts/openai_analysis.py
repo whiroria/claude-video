@@ -62,7 +62,9 @@ def _build_user_content(
         "transcript": transcript or "",
         "visual_input_note": (
             "Thumbnail plus sampled frames are attached."
-            if thumbnail_path and frame_paths
+            if (thumbnail_path or thumbnail_url) and frame_paths
+            else "Only a thumbnail is attached."
+            if (thumbnail_path or thumbnail_url) and not frame_paths
             else "Sampled frames are attached; thumbnail unavailable."
             if frame_paths
             else "No visual images are attached."
