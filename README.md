@@ -264,3 +264,77 @@ Built by Brad Bonanno — I make content about building with AI on [YouTube (@br
 ---
 
 [github.com/bradautomates/claude-video](https://github.com/bradautomates/claude-video) · [@bradbonanno](https://www.youtube.com/@bradbonanno) · [Solaris Automation](https://www.solarisautomation.io/) · [LICENSE](LICENSE)
+
+
+## Video Essay Analyzer
+
+This fork adds an end-to-end analyzer that accepts a **YouTube/video URL or local video file** and an optional transcript.
+
+Supported input combinations:
+
+- YouTube URL
+- YouTube URL + transcript
+- Local MP4/video file
+- Local MP4/video file + transcript
+- Transcript only: **not supported** (visual evidence is required)
+
+The transcript may be either a UTF-8 text file path or literal text. When no transcript is supplied, the analyzer tries native/auto captions first (Japanese, then English by default), then falls back to Groq/OpenAI Whisper when an API key is configured.
+
+### Run
+
+```bash
+python3 skills/watch/scripts/analyze.py "https://www.youtube.com/watch?v=..."
+python3 skills/watch/scripts/analyze.py "https://www.youtube.com/watch?v=..." --transcript transcript.txt
+python3 skills/watch/scripts/analyze.py "/path/to/video.mp4"
+python3 skills/watch/scripts/analyze.py "/path/to/video.mp4" --transcript transcript.txt
+```
+
+Windows:
+
+```powershell
+python skills/watch/scripts/analyze.py "C:\\path\\to\\video.mp4"
+```
+
+Set `OPENAI_API_KEY` in the environment or in `~/.config/watch/.env`. The analyzer uses the OpenAI Responses API with structured JSON output. The default analysis model is `gpt-5.6` and can be changed with `--model`.
+
+Useful options:
+
+```text
+--transcript PATH_OR_TEXT
+--sub-langs ja.*,en.*
+--language ja
+--model gpt-5.6
+--max-frames 40
+--resolution 512
+--out analysis.json
+--db ~/.config/watch/video_essay_analyzer.db
+--no-save
+--work-dir DIR
+```
+
+### Outputs
+
+Each run produces a structured JSON analysis and, unless `--no-save` is used, stores the record in SQLite.
+
+The analysis schema covers:
+
+- title / thumbnail packaging
+- first-30-second hook
+- chapter and structural progression
+- argumentation and evidence
+- storytelling and emotional arc
+- visual grammar and editing rhythm
+- retention hypotheses and drop-off risks
+- likely CTR / watch-time drivers (explicitly labeled as hypotheses)
+- reusable patterns
+- prioritized improvements
+- timestamped evidence
+- confidence and limitations
+
+SQLite default location:
+
+```text
+~/.config/watch/video_essay_analyzer.db
+```
+
+The original `/watch` skill remains available and unchanged in purpose; `analyze.py` is the persistent, structured Video Essay Analyzer workflow.
