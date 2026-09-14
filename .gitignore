@@ -14,3 +14,12 @@ htmlcov/
 
 # local Claude Code settings
 .claude/settings.local.json
+
+# Secrets and analysis data
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+.pytest_cache/
+analysis-output/

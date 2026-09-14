@@ -338,3 +338,84 @@ SQLite default location:
 ```
 
 The original `/watch` skill remains available and unchanged in purpose; `analyze.py` is the persistent, structured Video Essay Analyzer workflow.
+
+## Video Essay Analyzer v2 (research pipeline)
+
+v2 adds a normalized research database and millisecond timeline while preserving `/watch` and the original `skills/watch/scripts/analyze.py`. Start the new pipeline from the repository root:
+
+```bash
+python analyze.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode standard
+python analyze.py video.mp4 --transcript transcript.txt
+python analyze.py video.mp4 --mode fast
+python analyze.py video.mp4 --mode deep --deep-config deep-models.json
+```
+
+### 初めて使う場合
+
+Python 3.10以上、FFmpeg（ffprobeを含む）、yt-dlpを準備します。WindowsではPythonとFFmpegの実行ファイルをPATHに追加してください。yt-dlpは `python -m pip install yt-dlp` で導入できます。`ffmpeg -version`、`ffprobe -version`、`yt-dlp --version` で確認します。
+
+OpenAIの分析を使う場合は、PowerShellで `$env:OPENAI_API_KEY="自分のキー"` を設定します。YouTubeの正確な公開日時・比較対象一覧の取得には `$env:YOUTUBE_API_KEY="自分のキー"` を設定します。キーはGitHubやチャットに貼り付けません。OpenAIの既存設定ファイル `~/.config/watch/.env` も利用できます。`.env` を自動生成・コミットする処理はありません。
+
+APIなしでローカルの動作確認をするには:
+
+```bash
+python analyze.py video.mp4 --transcript transcript.txt --offline --db analysis-output/research.db --out analysis-output/result.json
+```
+
+`--offline` はAPI呼び出しを止めます。映像からのショット・色・無音・音量分析は動作し、LLMによる解釈は未実行として記録されます。トランスクリプトだけでは起動できません。指定した字幕を優先し、未指定なら日本語→英語の字幕→Whisperの順に試します。`--sub-langs "de.*,en.*"` で変更できます。時刻のない文章に時刻を捏造しません。
+
+### モードと現在の実装範囲
+
+| モード | 実装 | 条件・制限 |
+|---|---|---|
+| Fast | 入力、字幕、代表フレーム、OpenAI構造化分析、タイムライン、DB | 意味分析にはOpenAIキーが必要 |
+| Standard（既定） | Fast＋FFmpegショット検出・編集指標・ショット単位の色・無音・LUFS、任意CLIP/PANNs | CLIP/PANNsは別途パッケージとローカルモデルが必要。PANNsはspeech/music、SFXは未実装 |
+| Deep | Standard＋librosaビート、任意WhisperX単語整列・TransNetV2・Demucs接続 | 重いモデルの実機統合検証は未実施。Florence-2・B-rollとナレーションの意味類似度は未実装 |
+
+OpenAIは根拠付きの主張・章・Hook・映像素材・A/B-roll判断・タイトル/サムネイル/内容整合性の評価を返します。代表フレームの判断から動画全体の素材比率を捏造しません。CLIPで全ショットの中間フレームを分類できた場合のみ、素材比率を「ショット中間フレームから推定したモデル由来値」として保存します。
+
+### データの場所・比較・削除
+
+既定DBは `~/.config/watch/video_essay_analyzer.db`（Windowsではユーザーホーム以下）です。`--db` で変更できます。旧 `analyses` テーブルは保持され、v2が `videos`、`analysis_runs`、`performance_snapshots`、`timeline_events`、`video_features` などを追加します。旧履歴は自動移行しません。同一YouTube IDや同じ内容のローカル動画は1動画として扱い、再分析すると分析履歴とスナップショットを追加します。
+
+```bash
+python analyze.py --list
+python analyze.py --snapshot yt:VIDEO_ID
+python analyze.py --export csv --out research.csv
+python analyze.py --export json --out research.json
+python analyze.py --delete yt:VIDEO_ID --yes
+python analyze.py --batch videos.txt --mode standard
+```
+
+`videos.txt` は1行1動画のUTF-8ファイルです。バッチの1動画が失敗しても次へ進みます。結果JSON・フレームは画面に出る `work_dir` に保存されます。`--work-dir analysis-output` で保存場所を固定できます。削除は対象動画のv2 DBデータを削除します。元動画・フレーム・書き出し済みファイル・旧履歴は削除しません。
+
+CSVは1動画1行（最新分析＋最新パフォーマンス）で、特徴量の値・欠損理由・観測/モデル由来の区別・計算根拠を保持します。JSONにはイベントと分析根拠も含みます。モデルや取得時期が異なる値をそのままプールしないでください。分析対象の関連性は因果効果を意味しません。
+
+### 相対パフォーマンス
+
+対象再生数÷同一チャンネルで対象より前に公開された直近10本の再生数中央値。比較対象はYouTube Data APIのアップロード一覧から取得します。既定ではShortsを含めます。`--exclude-shorts` ではAPIだけでShortsを完全判別できないため、現在は正式な相対値を不明として扱います。DB内の「分析した直近10本」を正式な比較対象へ代用しません。
+
+10本未満、欠損、中央値0、一覧の探索上限（20ページ）に達した場合は限定・不明として記録します。公開からの経過日数で割ったviews/dayは累積平均であり、直近1日の増加数ではありません。過去24時間・7日後の再生数は現在の値から復元しません。`--snapshot` で今後の観測を蓄積できます。
+
+### 任意モデルの設定
+
+CLIP: `--clip-model PATH_TO_LOCAL_HF_CLIP`。`torch`、`transformers`、`Pillow`が必要です。PANNs: `--audio-checkpoint PATH_TO_CNN14_CHECKPOINT`。`panns-inference`、`librosa`等が必要です。パッケージ・weightsの対応バージョンをローカル環境で検証してから利用してください。自動インストールはしません。
+
+Deep設定ファイル例（使う項目だけ記載）:
+
+```json
+{
+  "device": "cpu",
+  "whisperx_model": "C:/models/whisper",
+  "alignment_model": "C:/models/alignment",
+  "language": "ja",
+  "transnet_module": "C:/models/TransNetV2/inference/transnetv2.py",
+  "transnet_weights": "C:/models/TransNetV2/inference/transnetv2-weights",
+  "demucs_repo": "C:/models/demucs",
+  "demucs_model": "htdemucs"
+}
+```
+
+ユーザー字幕がある場合、DeepでもWhisperXで置き換えません。Demucsの非ボーカル音声には効果音も含まれうるため、その存在だけで音楽と判定しません。ビート同期率は音楽分類が成功した区間のみで計算します。
+
+詳細: [仕様](docs/v2-spec.md)、[構成](docs/architecture.md)、[DB](docs/data-model.md)、[Timeline](docs/timeline-schema.md)、[数式とモード](docs/analysis-modes.md)、[依存とライセンス](docs/dependencies.md)、[検証と未完了事項](docs/validation.md)。
