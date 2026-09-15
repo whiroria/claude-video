@@ -133,6 +133,8 @@ def analyze(
     *,
     mode="standard",
     transcript=None,
+    title=None,
+    excerpt=False,
     sub_langs="ja.*,en.*",
     model="gpt-5.6",
     language="ja",
@@ -215,7 +217,8 @@ def analyze(
         else "url"
         if is_url(source)
         else "local_video",
-        "title": info.get("title") or Path(path).name,
+        "title": title or info.get("title") or Path(path).name,
+        "is_excerpt": bool(excerpt),
         "video_id": vid,
         "duration_ms": duration_ms,
         "duration_seconds": duration_ms / 1000,
@@ -522,6 +525,8 @@ def analyze(
                     warnings.append("Out-of-range VSEO score excluded.")
                     continue
                 if name == "thumbnail_score" and not metadata.get("thumbnail_url"):
+                    value = None
+                if excerpt and name in ("title_score", "content_keyword_alignment"):
                     value = None
                 sp = {
                     **p,
