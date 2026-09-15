@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,7 +10,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from download import VIDEO_EXTS, download, fetch_captions, is_url
-from frames import get_metadata
+from frames import extract_at_timestamps, get_metadata, merge_frames
 from openai_analysis import analyze_with_openai, load_openai_api_key
 from transcribe import format_transcript, parse_vtt
 from transcript_input import load_transcript_input
@@ -128,6 +129,81 @@ def validate_source(source):
             )
 
 
+def sample_representative_frames(path, work, duration_seconds, max_frames, resolution):
+    """Reserve a quarter of the frame budget for evenly spaced full-video coverage."""
+    anchor_budget = min(max_frames, max(1, max_frames // 4))
+    scene_budget = max_frames - anchor_budget
+    scene = (
+        _extract_frames(
+            path, work, duration_seconds, max_frames=scene_budget, resolution=resolution
+        )
+        if scene_budget
+        else []
+    )
+    if anchor_budget == 1:
+        points = [min(1.0, max(0.0, duration_seconds - 0.1))]
+    else:
+        last = max(0.0, duration_seconds - 0.1)
+        points = [last * i / (anchor_budget - 1) for i in range(anchor_budget)]
+    anchors, _ = extract_at_timestamps(
+        path,
+        work / "uniform-anchors",
+        points,
+        resolution=resolution,
+        max_frames=anchor_budget,
+    )
+    if not anchors:
+        return scene, {
+            "scene_budget": scene_budget, "anchor_count": 0, "strategy": "scene_only"
+        }
+    anchors = [
+        a for a in anchors
+        if all(abs(a["timestamp_seconds"] - s["timestamp_seconds"]) > 0.25 for s in scene)
+    ]
+    for anchor in anchors:
+        anchor["reason"] = "uniform-anchor"
+    return merge_frames(scene, anchors), {
+        "scene_budget": scene_budget,
+        "anchor_count": len(anchors),
+        "strategy": "scene_plus_uniform",
+    }
+
+
+def extract_embedded_cover(path, work):
+    """Use a local video's attached picture separately from sampled video frames."""
+    probe = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries",
+            "stream=index,codec_type:stream_disposition=attached_pic",
+            "-of", "json", str(path),
+        ],
+        capture_output=True, text=True,
+    )
+    if probe.returncode != 0:
+        return None
+    streams = json.loads(probe.stdout or "{}").get("streams", [])
+    cover = next(
+        (
+            s for s in streams
+            if s.get("codec_type") == "video"
+            and s.get("disposition", {}).get("attached_pic") == 1
+        ),
+        None,
+    )
+    if cover is None:
+        return None
+    dest = work / "embedded-cover.png"
+    extracted = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(path), "-map", f"0:{cover['index']}", "-frames:v", "1",
+            str(dest),
+        ],
+        capture_output=True, text=True,
+    )
+    return str(dest) if extracted.returncode == 0 and dest.is_file() else None
+
+
 def analyze(
     source,
     *,
@@ -200,6 +276,7 @@ def analyze(
     if duration_ms <= 0 or not media.get("width"):
         raise ValueError("Source must contain a video stream with positive duration")
     vid = video_identity(source, path)
+    embedded_cover = extract_embedded_cover(path, work) if not is_url(source) else None
     collected = now()
     published = date(info.get("upload_date"))
     if info.get("timestamp"):
@@ -226,6 +303,10 @@ def analyze(
         "collected_at": collected,
         "is_short": is_short,
         "thumbnail_url": info.get("thumbnail_url") if is_url(source) else None,
+        "thumbnail_path": embedded_cover,
+        "thumbnail_source": "embedded_cover" if embedded_cover else (
+            "source_url" if is_url(source) and info.get("thumbnail_url") else None
+        ),
         "media": media,
     }
 
@@ -345,19 +426,20 @@ def analyze(
             )
         except ValueError as exc:
             warnings.append("Invalid transcript timing excluded: " + str(exc))
-    frames = (
+    frame_result = (
         module(
             "frames",
-            lambda: _extract_frames(
+            lambda: sample_representative_frames(
                 path,
                 work,
                 duration_ms / 1000,
-                max_frames=max_frames,
-                resolution=resolution,
+                max_frames,
+                resolution,
             ),
         )
-        or []
+        or ([], {})
     )
+    frames, frame_sampling = frame_result
     fp = provenance(
         "representative_frame_sampling",
         path,
@@ -377,6 +459,7 @@ def analyze(
         ],
     )
     metadata["frame_timestamps"] = [f["timestamp_seconds"] for f in frames]
+    metadata["frame_sampling"] = frame_sampling
     shots = []
     color_result = None
     if mode != "fast":
@@ -441,6 +524,7 @@ def analyze(
                 metadata=metadata,
                 transcript=text,
                 frame_paths=[str(f["path"]) for f in frames],
+                thumbnail_path=embedded_cover,
                 thumbnail_url=metadata.get("thumbnail_url"),
                 output_language=language,
                 model=model,
@@ -524,7 +608,9 @@ def analyze(
                 ):
                     warnings.append("Out-of-range VSEO score excluded.")
                     continue
-                if name == "thumbnail_score" and not metadata.get("thumbnail_url"):
+                if name == "thumbnail_score" and not (
+                    metadata.get("thumbnail_url") or embedded_cover
+                ):
                     value = None
                 if excerpt and name in ("title_score", "content_keyword_alignment"):
                     value = None
