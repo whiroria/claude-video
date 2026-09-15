@@ -373,6 +373,8 @@ python analyze.py video.mp4 --transcript transcript.txt --offline --db analysis-
 | Standard（既定） | Fast＋FFmpegショット検出・編集指標・ショット単位の色・無音・LUFS、任意CLIP/PANNs | CLIP/PANNsは別途パッケージとローカルモデルが必要。PANNsはspeech/music、SFXは未実装 |
 | Deep | Standard＋librosaビート、任意WhisperX単語整列・TransNetV2・Demucs接続 | 重いモデルの実機統合検証は未実施。Florence-2・B-rollとナレーションの意味類似度は未実装 |
 
+v2では代表フレーム予算の約4分の1を動画全体に等間隔で配置し、残りをシーン変化候補に割り当てます。カットの少ないアニメーションでも中盤・終盤を見逃しにくくします。ショット検出は閾値による推定のままで、連続した図の変化をすべてカットとして数えません。
+
 OpenAIは根拠付きの主張・章・Hook・映像素材・A/B-roll判断・タイトル/サムネイル/内容整合性の評価を返します。代表フレームの判断から動画全体の素材比率を捏造しません。CLIPで全ショットの中間フレームを分類できた場合のみ、素材比率を「ショット中間フレームから推定したモデル由来値」として保存します。
 
 ### データの場所・比較・削除
