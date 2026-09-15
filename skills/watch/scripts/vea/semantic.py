@@ -99,5 +99,6 @@ Use null for unknown hook end. Chapters require timed evidence; otherwise return
 Visual samples classify only actual attached frames, not unsampled intervals. A-roll/B-roll describes narrative function, not material type; choose unknown if context is insufficient.
 VSEO rubric v2.0: title_score = 0-10 mean of topic specificity, faithful promise, comprehensibility; thumbnail_score = 0-10 mean of legibility, focal clarity, fit to content; content_keyword_alignment = 0-10 fidelity of title concepts to transcript. Supply evidence and confidence, use null when the relevant inputs are absent. These are subjective rubric scores, not YouTube ranking predictions. Do not score competition without search evidence.
 If metadata.is_excerpt is true, the clip ends artificially: do not treat its ending as the original video's conclusion or recommend changing the original video's title based on a temporary filename. An excerpt alone cannot establish whole-video title/content alignment or the video's final payoff; use null for those scores and describe only the excerpt's structure.
+If metadata.thumbnail_source is embedded_cover, the attached image is available for visual analysis, but it has not been verified against the live YouTube thumbnail. Label the source clearly and avoid claims about current packaging or actual CTR.
 """
 )
