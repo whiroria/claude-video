@@ -17,6 +17,8 @@ def main(argv=None):
     ap.add_argument("source", nargs="?")
     ap.add_argument("--mode", choices=["fast", "standard", "deep"], default="standard")
     ap.add_argument("--transcript")
+    ap.add_argument("--title", help="Original public title for a local video or excerpt")
+    ap.add_argument("--excerpt", action="store_true", help="Input is a clip, not the complete video")
     ap.add_argument("--sub-langs", default="ja.*,en.*")
     ap.add_argument("--model", default="gpt-5.6")
     ap.add_argument("--language", default="ja")
@@ -112,6 +114,8 @@ def main(argv=None):
                 for k in (
                     "mode",
                     "transcript",
+                    "title",
+                    "excerpt",
                     "sub_langs",
                     "model",
                     "language",
