@@ -429,3 +429,20 @@ Deep設定ファイル例（使う項目だけ記載）:
 `skills/watch/result-viewer.html` をダブルクリックし、既存の `result.json` を選択してください。画面には入力資料で確認できる情報、AIの解釈、未確認・不足情報を分けて表示します。複数JSONを選ぶと動画を切り替えられます。ファイルはブラウザー内で処理し、通信・API呼び出し・保存は行いません。従来のJSONにも対応し、既存分析の内容を再判定したり書き換えたりしません。
 
 今後の分析では告知を無料登録・有料購入・チャンネル登録などに分け、無料／有料が不明なら未確認とします。新しい分類は既存JSONへ自動追加しません。画像取得は区間中央のアンカーを優先し、取得失敗数と最大の未撮影時間も記録します。WindowsのFFmpeg出力はUTF-8で読み取り、API応答の待ち時間は600秒、自動再試行なしです。
+
+### 声・音楽と画面切替の時間軸（短区間の試作）
+
+結果画面の「音声・映像」で、声と音楽の推定区間を別々の列に、既存のシーン変化を同じ時間軸に表示します。元MP4を選べば色の区間をクリックして再生位置を移動できます。ブラウザー内の再生のみで、動画をアップロードしません。
+
+任意の追加処理（Python 3.12 / CPUで検証済み。Python 3.14の依存パッケージ対応は未検証）：
+
+```sh
+python -m pip install numpy onnxruntime
+python skills/watch/scripts/vea/audio_timeline.py video.mp4 --result analysis-output/result.json --model /path/to/yamnet.onnx --labels /path/to/yamnet_class_map.csv --seconds 60 --out analysis-output/audio-result.json
+```
+
+モデルは別途ローカルに配置します。Google YAMNetの[ONNX変換版](https://huggingface.co/audiomagic/yamnet-onnx/tree/f25b741c2f0bdc6d7e6db24b5fddda23347dbafd)の `yamnet.onnx` と `yamnet_class_map.csv` を使用して検証しました。モデルはApache-2.0、AudioSetラベルはCC BY 4.0。重みはこのリポジトリに同梱せず、自動ダウンロードも行いません。[Google公式説明](https://www.tensorflow.org/hub/tutorials/yamnet)に従い16kHzモノラル音声を使い、モデルとラベルのハッシュを結果に記録します。
+
+解析は0.96秒の窓／0.48秒刻み。声と音楽の重複を許容します。音楽はBGM・劇中音楽などを区別できず、声はナレーター以外も含みます。未検出は無音や不存在を意味しません。境界・スコアは推定であり、音楽の入り方や抑揚の質を評価する機能ではありません。しきい値は0.3が試作の既定値で、実動画での精度は聴取照合が必要です。
+
+既存のJSONを入力し、`media_timeline` を追加した別ファイルを作ります。元のAI分析、全編の特徴量とrun_idは保持し、追加音声解析には独自の解析時刻と対象区間を記録します。動画ハッシュが一致しない場合は拒否し、元JSONへの上書きも拒否します。`--start` と `--seconds` で対象区間を選べます。結果画面では未解析の全編を分析済みと表示しません。
