@@ -111,7 +111,7 @@ def analyze_with_openai(
     output_language: str = "ja",
     model: str = DEFAULT_MODEL,
     api_key: str | None = None,
-    timeout: int = 180,
+    timeout: int = 600,
     schema: dict | None = None,
     instructions: str | None = None,
 ) -> dict[str, Any]:
@@ -163,6 +163,8 @@ def analyze_with_openai(
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise SystemExit(f"OpenAI analysis failed ({exc.code}): {body[:1000]}")
+    except TimeoutError as exc:
+        raise SystemExit("OpenAI response timed out; request was not retried. Check usage before retrying.") from exc
     except urllib.error.URLError as exc:
         raise SystemExit(f"OpenAI analysis request failed: {exc}")
 
