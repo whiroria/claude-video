@@ -346,6 +346,7 @@ v2 adds a normalized research database and millisecond timeline while preserving
 ```bash
 python analyze.py "https://www.youtube.com/watch?v=VIDEO_ID" --mode standard
 python analyze.py video.mp4 --transcript transcript.txt
+python analyze.py sample.mp4 --transcript transcript.vtt --title "Original public title" --excerpt
 python analyze.py video.mp4 --mode fast
 python analyze.py video.mp4 --mode deep --deep-config deep-models.json
 ```
