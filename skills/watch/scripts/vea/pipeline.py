@@ -130,42 +130,37 @@ def validate_source(source):
 
 
 def sample_representative_frames(path, work, duration_seconds, max_frames, resolution):
-    """Reserve a quarter of the frame budget for evenly spaced full-video coverage."""
-    anchor_budget = min(max_frames, max(1, max_frames // 4))
-    scene_budget = max_frames - anchor_budget
-    scene = (
-        _extract_frames(
-            path, work, duration_seconds, max_frames=scene_budget, resolution=resolution
-        )
-        if scene_budget
-        else []
-    )
-    if anchor_budget == 1:
-        points = [min(1.0, max(0.0, duration_seconds - 0.1))]
-    else:
-        last = max(0.0, duration_seconds - 0.1)
-        points = [last * i / (anchor_budget - 1) for i in range(anchor_budget)]
+    """Keep interior coverage anchors; scene duplicates must not remove them."""
+    if max_frames < 1 or duration_seconds <= 0:
+        raise ValueError("Frame budget and duration must be positive")
+    anchor_budget = min(max_frames, max(4, (max_frames + 1) // 2))
+    points = [duration_seconds * (i + 0.5) / anchor_budget for i in range(anchor_budget)]
     anchors, _ = extract_at_timestamps(
-        path,
-        work / "uniform-anchors",
-        points,
-        resolution=resolution,
-        max_frames=anchor_budget,
+        path, work / "uniform-anchors", points,
+        resolution=resolution, max_frames=anchor_budget,
     )
-    if not anchors:
-        return scene, {
-            "scene_budget": scene_budget, "anchor_count": 0, "strategy": "scene_only"
-        }
-    anchors = [
-        a for a in anchors
-        if all(abs(a["timestamp_seconds"] - s["timestamp_seconds"]) > 0.25 for s in scene)
-    ]
     for anchor in anchors:
         anchor["reason"] = "uniform-anchor"
-    return merge_frames(scene, anchors), {
+    scene_budget = max_frames - len(anchors)
+    scene = (_extract_frames(
+        path, work, duration_seconds, max_frames=scene_budget, resolution=resolution
+    ) if scene_budget else [])
+    scene = [s for s in scene if all(
+        abs(s["timestamp_seconds"] - a["timestamp_seconds"]) > 0.25
+        for a in anchors
+    )]
+    merged = merge_frames(scene, anchors)
+    times = sorted(f["timestamp_seconds"] for f in merged)
+    boundaries = [0.0, *times, duration_seconds]
+    return merged, {
         "scene_budget": scene_budget,
         "anchor_count": len(anchors),
-        "strategy": "scene_plus_uniform",
+        "anchor_requested": anchor_budget,
+        "anchor_failed": anchor_budget - len(anchors),
+        "strategy": "scene_plus_uniform" if anchors else "scene_only",
+        "max_unsampled_gap_seconds": round(max(
+            b - a for a, b in zip(boundaries, boundaries[1:])
+        ), 2),
     }
 
 
@@ -177,7 +172,7 @@ def extract_embedded_cover(path, work):
             "stream=index,codec_type:stream_disposition=attached_pic",
             "-of", "json", str(path),
         ],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if probe.returncode != 0:
         return None
@@ -199,7 +194,7 @@ def extract_embedded_cover(path, work):
             "-i", str(path), "-map", f"0:{cover['index']}", "-frames:v", "1",
             str(dest),
         ],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return str(dest) if extracted.returncode == 0 and dest.is_file() else None
 
