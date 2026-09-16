@@ -11,6 +11,7 @@ import sys
 import threading
 import uuid
 import webbrowser
+from urllib.parse import urlparse
 
 SCRIPTS = Path(__file__).resolve().parent
 SKILL = SCRIPTS.parent
@@ -40,13 +41,24 @@ def build_command(source, transcript, title, offline, output):
     return cmd
 
 
-def selected_source(mode, video, url):
-    source = (url if mode == 'url' else video).strip()
-    if mode == 'url' and not source.startswith(('https://', 'http://')):
-        raise ValueError('YouTube URLを入力してください。')
-    if mode == 'file' and source.startswith(('https://', 'http://')):
+def selected_source(video, url):
+    video, url = video.strip(), url.strip()
+    if not video and not url:
+        raise ValueError('動画ファイルまたはYouTube URLを入力してください。')
+    if url:
+        parsed = urlparse(url)
+        if parsed.scheme not in ('https', 'http') or not parsed.hostname:
+            raise ValueError('URL欄には https:// から始まる動画URLを入力してください。')
+    if video.startswith(('https://', 'http://')):
         raise ValueError('動画ファイル欄には「選ぶ」でファイルを指定してください。')
-    return source
+    return video or url
+
+
+def attach_reference(data, url):
+    if url:
+        data.setdefault('metadata', {})['user_reference_url'] = url
+        data['metadata']['user_reference_url_note'] = 'ユーザー指定の参照URL。動画ファイルとの一致は未確認。'
+    return data
 
 
 def save_pasted_transcript(text, directory):
@@ -106,19 +118,9 @@ def main():
             button = ttk.Button(parent, text='選ぶ', command=choose)
             button.grid(row=row, column=2, padx=(8, 0))
         return entry, button
-    source_mode = tk.StringVar(value='file')
-    choices = ttk.Frame(inputs)
-    choices.grid(row=0, column=0, columnspan=3, sticky='w')
-    def source_changed():
-        local = source_mode.get() == 'file'
-        video_entry.config(state='normal' if local else 'disabled')
-        video_button.config(state='normal' if local else 'disabled')
-        url_entry.config(state='disabled' if local else 'normal')
-    ttk.Radiobutton(choices, text='動画ファイルを使う', variable=source_mode, value='file', command=source_changed).pack(side='left', padx=(0, 20))
-    ttk.Radiobutton(choices, text='YouTube URLを使う', variable=source_mode, value='url', command=source_changed).pack(side='left')
-    video_entry, video_button = field(inputs, 1, 'video', '動画ファイル', [('動画', '*.mp4 *.mkv *.mov *.webm'), ('全ファイル', '*.*')])
-    url_entry, _ = field(inputs, 2, 'url', 'YouTube URL')
-    source_changed()
+    ttk.Label(inputs, text='片方だけでも、両方でも入力できます。両方ある場合は動画ファイルを分析し、URLを参照先として保存します。', wraplength=690).grid(row=0, column=0, columnspan=3, sticky='w', pady=6)
+    field(inputs, 1, 'video', '動画ファイル（任意）', [('動画', '*.mp4 *.mkv *.mov *.webm'), ('全ファイル', '*.*')])
+    field(inputs, 2, 'url', 'YouTube URL（任意）')
     field(inputs, 3, 'title', '元の動画タイトル（任意）')
     subtitles = ttk.Notebook(inputs)
     subtitles.grid(row=4, column=0, columnspan=3, sticky='nsew', pady=10)
@@ -152,7 +154,7 @@ def main():
         OUTPUT.mkdir(parents=True, exist_ok=True)
         if sys.platform == 'win32': os.startfile(str(OUTPUT))
         else: webbrowser.open(OUTPUT.as_uri())
-    def run_job(cmd, env, output, model, labels, source):
+    def run_job(cmd, env, output, model, labels, source, reference_url):
         try:
             # Keep complete child logs off disk: an API error may echo part of a key.
             result = subprocess.run(cmd, cwd=SCRIPTS, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -163,6 +165,7 @@ def main():
                 raise RuntimeError(detail)
             # Keep credential fragments out of the delivered JSON and HTML.
             data = json.loads(output.read_text(encoding='utf-8'))
+            attach_reference(data, reference_url)
             for error in data.get('errors', []):
                 message = str(error.get('message', ''))
                 if 'Incorrect API key provided' in message:
@@ -197,7 +200,7 @@ def main():
             if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
                 raise ValueError('ffmpeg / ffprobeが見つかりません。インストール済みならアプリを開き直してください。')
             output = OUTPUT / uuid.uuid4().hex / 'result.json'
-            v['source'] = selected_source(source_mode.get(), v['video'], v['url'])
+            v['source'] = selected_source(v['video'], v['url'])
             use_paste = subtitles.index(subtitles.select()) == 1
             # Validate the selected source before creating any pasted file.
             cmd = build_command(v['source'], '' if use_paste else v['transcript'], v['title'], offline.get(), output)
@@ -220,7 +223,7 @@ def main():
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
             progress.start()
-            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source']), daemon=True).start()
+            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url']), daemon=True).start()
         except (ValueError, OSError) as exc: messagebox.showerror('入力を確認してください', str(exc))
     start_button = ttk.Button(frame, text='分析する', command=start)
     start_button.grid(row=12, column=0, pady=16, sticky='w')
