@@ -45,3 +45,29 @@ def test_real_offline_analysis_and_report(tmp_path):
     assert data['metadata']['title'] == 'テスト動画'
     assert data['metadata']['duration_ms'] > 0
     assert data['modules']['editing']['status'] == 'ok'
+
+
+def test_source_selection_ignores_other_field(tmp_path):
+    video = str(tmp_path / 'video.mp4')
+    assert desktop.selected_source('file', video, 'https://youtu.be/unused') == video
+    assert desktop.selected_source('url', video, 'https://youtu.be/selected') == 'https://youtu.be/selected'
+    with pytest.raises(ValueError):
+        desktop.selected_source('url', video, '')
+
+
+def test_pasted_subtitles_preserve_timing_and_plain_text(tmp_path):
+    sys.path.insert(0, str(SCRIPTS))
+    from transcribe import parse_vtt
+    srt = '1\n00:00:01,200 --> 00:00:02,500\nこんにちは。\n'
+    path = Path(desktop.save_pasted_transcript(srt, tmp_path))
+    assert path.suffix == '.vtt'
+    segments = parse_vtt(str(path))
+    assert len(segments) == 1
+    assert segments[0]['text'] == 'こんにちは。'
+    assert '00:00:01.200 --> 00:00:02.500' in path.read_text()
+    text = '時刻のない字幕です。\n次の段落です。'
+    plain = Path(desktop.save_pasted_transcript(text, tmp_path))
+    assert plain.suffix == '.txt'
+    assert plain.read_text().strip() == text
+    with pytest.raises(ValueError):
+        desktop.save_pasted_transcript('  ', tmp_path)
