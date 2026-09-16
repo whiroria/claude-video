@@ -460,7 +460,7 @@ def analyze(
     shots = []
     color_result = None
     if mode != "fast":
-        detector = FFmpegSceneDetector(scene_threshold)
+        detector = FFmpegSceneDetector(scene_threshold, float(os.environ.get("WATCH_SCENE_TOP_FRACTION", "1")))
         if mode == "deep" and deep_config.get("transnet_module"):
             from .deep import TransNetDetector
 
@@ -471,6 +471,12 @@ def analyze(
             ef, pacing = editing(shots, duration_ms)
             features.update(ef)
             modules["editing"]["pacing_curve"] = pacing
+            longest = max((s["end_ms"] - s["start_ms"]) / 1000 for s in shots)
+            if longest >= 120:
+                note = f"画面変化の未検出区間が最長{longest:.1f}秒あります。長回しとは限らず、検出漏れも考えられます。元映像との照合が必要です。"
+                modules["editing"]["note"] = note
+                warnings.append(note)
+
             c = module("color", lambda: color(path, shots))
             if c:
                 features.update(c[0])
