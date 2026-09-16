@@ -80,3 +80,13 @@ def test_pasted_subtitles_preserve_timing_and_plain_text(tmp_path):
     assert plain.read_text().strip() == text
     with pytest.raises(ValueError):
         desktop.save_pasted_transcript('  ', tmp_path)
+
+
+def test_failure_details_preserve_download_cause_and_hide_key():
+    stdout = json.dumps({'status': 'failed', 'error': 'yt-dlp is not installed'})
+    detail = desktop.failure_details(stdout, '')
+    assert 'yt-dlp' in detail and '見つかりません' in detail
+    detail = desktop.failure_details('', 'ERROR: Sign in to confirm you are not a bot')
+    assert 'ログイン確認' in detail
+    detail = desktop.failure_details('', 'Authorization: Bearer secret-value\nIncorrect API key provided: sk-masked***\nsecret-value', 'secret-value')
+    assert 'secret-value' not in detail and 'sk-masked' not in detail
