@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,31 @@ def build_command(source, transcript, title, offline, output):
     return cmd
 
 
+def selected_source(mode, video, url):
+    source = (url if mode == 'url' else video).strip()
+    if mode == 'url' and not source.startswith(('https://', 'http://')):
+        raise ValueError('YouTube URLを入力してください。')
+    if mode == 'file' and source.startswith(('https://', 'http://')):
+        raise ValueError('動画ファイル欄には「選ぶ」でファイルを指定してください。')
+    return source
+
+
+def save_pasted_transcript(text, directory):
+    text = text.lstrip('\ufeff').strip()
+    if not text:
+        raise ValueError('字幕を貼り付けるか、「字幕ファイル」のタブを選んでください。')
+    # Preserve timing when full SRT timecodes or WEBVTT are pasted.
+    is_srt = bool(re.search(r'(?m)^\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}', text))
+    if is_srt:
+        text = re.sub(r'(\d{2}:\d{2}:\d{2}),(\d{3})', r'\1.\2', text)
+        text = 'WEBVTT\n\n' + text
+    suffix = '.vtt' if text.startswith('WEBVTT') else '.txt'
+    path = directory / ('pasted-transcript' + suffix)
+    directory.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + '\n', encoding='utf-8')
+    return str(path)
+
+
 def make_report(result, destination):
     data = json.loads(result.read_text(encoding='utf-8-sig'))
     payload = json.dumps(data, ensure_ascii=False).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
@@ -53,33 +79,68 @@ def main():
     from tkinter import filedialog, messagebox, ttk
     root = tk.Tk()
     root.title('Video Essay Analyzer')
-    root.geometry('820x730')
+    root.geometry('850x760')
     root.minsize(720, 650)
-    frame = ttk.Frame(root, padding=24)
+    frame = ttk.Frame(root, padding=20)
     frame.pack(fill='both', expand=True)
     frame.columnconfigure(1, weight=1)
-    ttk.Label(frame, text='動画を選んで分析する', font=('', 20, 'bold')).grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 16))
+    ttk.Label(frame, text='動画を選んで分析する', font=('', 20, 'bold')).grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 12))
+    pages = ttk.Notebook(frame)
+    pages.grid(row=1, column=0, columnspan=3, sticky='nsew')
+    frame.rowconfigure(1, weight=1)
+    inputs, settings = ttk.Frame(pages, padding=12), ttk.Frame(pages, padding=12)
+    pages.add(inputs, text='動画・字幕')
+    pages.add(settings, text='API・音声設定')
+    for parent in (inputs, settings): parent.columnconfigure(1, weight=1)
     values = {}
-    def field(row, name, label, kind=None, secret=False):
+    def field(parent, row, name, label, kind=None, secret=False):
         v = tk.StringVar(); values[name] = v
-        ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', padx=(0, 12), pady=6)
-        ttk.Entry(frame, textvariable=v, show='*' if secret else '').grid(row=row, column=1, sticky='ew', pady=6)
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky='w', padx=(0, 12), pady=6)
+        entry = ttk.Entry(parent, textvariable=v, show='*' if secret else '')
+        entry.grid(row=row, column=1, sticky='ew', pady=6)
+        button = None
         if kind:
             def choose():
                 path = filedialog.askopenfilename(filetypes=kind)
                 if path: v.set(path)
-            ttk.Button(frame, text='選ぶ', command=choose).grid(row=row, column=2, padx=(8, 0))
-    field(1, 'source', '動画 / YouTube URL', [('動画', '*.mp4 *.mkv *.mov *.webm'), ('全ファイル', '*.*')])
-    field(2, 'transcript', '字幕（任意）', [('字幕', '*.vtt *.srt *.txt'), ('全ファイル', '*.*')])
-    field(3, 'title', '元の動画タイトル（任意）')
-    field(4, 'key', 'OpenAI APIキー', secret=True)
+            button = ttk.Button(parent, text='選ぶ', command=choose)
+            button.grid(row=row, column=2, padx=(8, 0))
+        return entry, button
+    source_mode = tk.StringVar(value='file')
+    choices = ttk.Frame(inputs)
+    choices.grid(row=0, column=0, columnspan=3, sticky='w')
+    def source_changed():
+        local = source_mode.get() == 'file'
+        video_entry.config(state='normal' if local else 'disabled')
+        video_button.config(state='normal' if local else 'disabled')
+        url_entry.config(state='disabled' if local else 'normal')
+    ttk.Radiobutton(choices, text='動画ファイルを使う', variable=source_mode, value='file', command=source_changed).pack(side='left', padx=(0, 20))
+    ttk.Radiobutton(choices, text='YouTube URLを使う', variable=source_mode, value='url', command=source_changed).pack(side='left')
+    video_entry, video_button = field(inputs, 1, 'video', '動画ファイル', [('動画', '*.mp4 *.mkv *.mov *.webm'), ('全ファイル', '*.*')])
+    url_entry, _ = field(inputs, 2, 'url', 'YouTube URL')
+    source_changed()
+    field(inputs, 3, 'title', '元の動画タイトル（任意）')
+    subtitles = ttk.Notebook(inputs)
+    subtitles.grid(row=4, column=0, columnspan=3, sticky='nsew', pady=10)
+    inputs.rowconfigure(4, weight=1)
+    sub_file, sub_paste = ttk.Frame(subtitles, padding=8), ttk.Frame(subtitles, padding=8)
+    subtitles.add(sub_file, text='字幕ファイル（任意）')
+    subtitles.add(sub_paste, text='字幕をコピペ')
+    sub_file.columnconfigure(1, weight=1)
+    field(sub_file, 0, 'transcript', '字幕ファイル', [('字幕', '*.vtt *.srt *.txt'), ('全ファイル', '*.*')])
+    ttk.Label(sub_file, text='SRT・VTT・TXTに対応。空欄なら既存の字幕取得・文字起こし処理を使います。', wraplength=690).grid(row=1, column=0, columnspan=3, sticky='w', pady=8)
+    from tkinter.scrolledtext import ScrolledText
+    pasted = ScrolledText(sub_paste, height=6, wrap='word', undo=True)
+    pasted.pack(fill='both', expand=True)
+    ttk.Label(sub_paste, text='Ctrl+Vで貼り付け。通常の文章・SRT・VTTに対応。時刻のない文章は正確な時刻照合に使えません。', wraplength=690).pack(anchor='w', pady=(6, 0))
+    field(settings, 0, 'key', 'OpenAI APIキー', secret=True)
     offline = tk.BooleanVar(value=False)
-    ttk.Checkbutton(frame, text='ローカル計測のみ（AI台本分析なし・API利用なし）', variable=offline).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
-    ttk.Label(frame, text='AI分析では字幕と抽出画像などをOpenAIへ送信し、API利用料が発生します。\nキーはこの起動中だけ使用します。空欄なら既存の設定を使います。', wraplength=740).grid(row=6, column=0, columnspan=3, sticky='w', pady=6)
-    field(7, 'model', '音声モデル（任意）', [('YAMNet ONNX', '*.onnx')])
-    field(8, 'labels', '音声ラベル（任意）', [('YAMNet class map', '*.csv')])
-    ttk.Label(frame, text='音声の区間推定には上の2ファイルと numpy / onnxruntime が必要です。\n空欄でも、台本・画面切替・音量などの基本分析は実行できます。', wraplength=740).grid(row=9, column=0, columnspan=3, sticky='w', pady=6)
-    status = tk.StringVar(value='動画を選択してください。字幕だけでの分析はできません。')
+    ttk.Checkbutton(settings, text='ローカル計測のみ（AI台本分析なし・API利用なし）', variable=offline).grid(row=1, column=0, columnspan=3, sticky='w', pady=6)
+    ttk.Label(settings, text='AI分析では字幕と抽出画像などをOpenAIへ送信し、API利用料が発生します。\nキーはこの起動中だけ使用します。空欄なら既存の設定を使います。', wraplength=690).grid(row=2, column=0, columnspan=3, sticky='w', pady=6)
+    field(settings, 3, 'model', '音声モデル（任意）', [('YAMNet ONNX', '*.onnx')])
+    field(settings, 4, 'labels', '音声ラベル（任意）', [('YAMNet class map', '*.csv')])
+    ttk.Label(settings, text='音声の区間推定には上の2ファイルと numpy / onnxruntime が必要です。\n空欄でも、台本・画面切替・音量などの基本分析は実行できます。', wraplength=690).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
+    status = tk.StringVar(value='動画ファイルかYouTube URLを指定してください。字幕は選択中のタブの入力だけを使います。')
     ttk.Label(frame, textvariable=status, wraplength=740).grid(row=10, column=0, columnspan=3, sticky='w', pady=12)
     progress = ttk.Progressbar(frame, mode='indeterminate')
     progress.grid(row=11, column=0, columnspan=3, sticky='ew')
@@ -136,7 +197,12 @@ def main():
             if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
                 raise ValueError('ffmpeg / ffprobeが見つかりません。インストール済みならアプリを開き直してください。')
             output = OUTPUT / uuid.uuid4().hex / 'result.json'
-            cmd = build_command(v['source'], v['transcript'], v['title'], offline.get(), output)
+            v['source'] = selected_source(source_mode.get(), v['video'], v['url'])
+            use_paste = subtitles.index(subtitles.select()) == 1
+            # Validate the selected source before creating any pasted file.
+            cmd = build_command(v['source'], '' if use_paste else v['transcript'], v['title'], offline.get(), output)
+            if use_paste and not pasted.get('1.0', 'end-1c').strip():
+                raise ValueError('「字幕をコピペ」の欄に文章を貼り付けてください。')
             if bool(v['model']) != bool(v['labels']): raise ValueError('音声モデルと音声ラベルは両方選んでください。')
             if v['model']:
                 if v['source'].startswith(('http://', 'https://')): raise ValueError('音声の区間推定を使う場合はローカル動画を選んでください。')
@@ -147,12 +213,15 @@ def main():
             env = dict(os.environ, PYTHONUTF8='1')
             if key: env['OPENAI_API_KEY'] = key
             output.parent.mkdir(parents=True, exist_ok=True)
+            if use_paste:
+                transcript_path = save_pasted_transcript(pasted.get('1.0', 'end-1c'), output.parent)
+                cmd = build_command(v['source'], transcript_path, v['title'], offline.get(), output)
             state['busy'] = True; state['note'] = ''
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
             progress.start()
             threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source']), daemon=True).start()
-        except ValueError as exc: messagebox.showerror('入力を確認してください', str(exc))
+        except (ValueError, OSError) as exc: messagebox.showerror('入力を確認してください', str(exc))
     start_button = ttk.Button(frame, text='分析する', command=start)
     start_button.grid(row=12, column=0, pady=16, sticky='w')
     result_button = ttk.Button(frame, text='結果を開く', command=open_result, state='disabled')
