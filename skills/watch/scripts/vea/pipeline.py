@@ -516,7 +516,13 @@ def analyze(
         a = module(
             "script",
             lambda: analyze_with_openai(
-                metadata=metadata,
+                metadata={**metadata, "measurement_context": {
+                    name: {"value": feature.get("value"), "status": feature.get("status"),
+                           "unit": feature.get("unit"), "method": feature.get("provenance", {}).get("method")}
+                    for name, feature in features.items()
+                    if name in ("shot_count", "avg_shot_length", "median_shot_length",
+                                "cuts_per_min", "loudness", "silence_ratio")
+                }},
                 transcript=text,
                 frame_paths=[str(f["path"]) for f in frames],
                 thumbnail_path=embedded_cover,
