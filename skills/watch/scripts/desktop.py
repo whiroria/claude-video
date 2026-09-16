@@ -174,6 +174,10 @@ def main():
     ttk.Label(settings, text='自動文字起こしの音声言語').grid(row=6, column=0, sticky='w', pady=6)
     ttk.Combobox(settings, textvariable=speech_language, values=('自動判定', '日本語', '英語'), state='readonly').grid(row=6, column=1, sticky='ew')
     ttk.Label(settings, text='日本語音声なら「日本語」を選択。字幕ファイル・コピペ・取得済み字幕はそのまま使います。', wraplength=690).grid(row=7, column=0, columnspan=3, sticky='w')
+    rhythm_mode = tk.StringVar(value='従来：画面全体・感度低')
+    ttk.Label(settings, text='画面切替の検出').grid(row=8, column=0, sticky='w', pady=6)
+    ttk.Combobox(settings, textvariable=rhythm_mode, values=('従来：画面全体・感度低', '画面全体・感度高', '下部字幕あり：上75%・感度高'), state='readonly', width=32).grid(row=8, column=1, sticky='ew')
+    ttk.Label(settings, text='下部字幕あり：画面の下25%を除外します。感度を上げると動きの誤検出も増えます。', wraplength=690).grid(row=9, column=0, columnspan=3, sticky='w')
     detailed = tk.BooleanVar(value=False)
     ttk.Checkbutton(inputs, text='全編詳細分析（60秒ごとに4枚・追加API料金と待ち時間が発生）', variable=detailed).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
     status = tk.StringVar(value='動画ファイルかYouTube URLを指定してください。字幕は選択中のタブの入力だけを使います。')
@@ -265,6 +269,9 @@ def main():
             if use_paste:
                 transcript_path = save_pasted_transcript(pasted.get('1.0', 'end-1c'), output.parent)
                 cmd = build_command(v['source'], transcript_path, v['title'], offline.get(), output)
+            if rhythm_mode.get() != '従来：画面全体・感度低':
+                cmd += ['--scene-threshold', '0.10']
+            env['WATCH_SCENE_TOP_FRACTION'] = '0.75' if rhythm_mode.get().startswith('下部字幕あり') else '1'
             state['busy'] = True; state['note'] = ''
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
