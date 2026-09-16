@@ -170,6 +170,10 @@ def main():
     field(settings, 3, 'model', '音声モデル（任意）', [('YAMNet ONNX', '*.onnx')])
     field(settings, 4, 'labels', '音声ラベル（任意）', [('YAMNet class map', '*.csv')])
     ttk.Label(settings, text='音声の区間推定には上の2ファイルと numpy / onnxruntime が必要です。\n空欄でも、台本・画面切替・音量などの基本分析は実行できます。', wraplength=690).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
+    speech_language = tk.StringVar(value='自動判定')
+    ttk.Label(settings, text='自動文字起こしの音声言語').grid(row=6, column=0, sticky='w', pady=6)
+    ttk.Combobox(settings, textvariable=speech_language, values=('自動判定', '日本語', '英語'), state='readonly').grid(row=6, column=1, sticky='ew')
+    ttk.Label(settings, text='日本語音声なら「日本語」を選択。字幕ファイル・コピペ・取得済み字幕はそのまま使います。', wraplength=690).grid(row=7, column=0, columnspan=3, sticky='w')
     detailed = tk.BooleanVar(value=False)
     ttk.Checkbutton(inputs, text='全編詳細分析（60秒ごとに4枚・追加API料金と待ち時間が発生）', variable=detailed).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
     status = tk.StringVar(value='動画ファイルかYouTube URLを指定してください。字幕は選択中のタブの入力だけを使います。')
@@ -255,6 +259,7 @@ def main():
             if detailed.get() and offline.get():
                 raise ValueError('全編詳細分析はAIを使います。「ローカル計測のみ」を外してください。')
             env = dict(os.environ, PYTHONUTF8='1')
+            env['WATCH_TRANSCRIPT_LANGUAGE'] = {'自動判定': 'auto', '日本語': 'ja', '英語': 'en'}[speech_language.get()]
             if key: env['OPENAI_API_KEY'] = key
             output.parent.mkdir(parents=True, exist_ok=True)
             if use_paste:
