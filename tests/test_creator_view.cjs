@@ -1,0 +1,28 @@
+const {JSDOM,VirtualConsole}=require('jsdom');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const errors=[],vc=new VirtualConsole();vc.on('jsdomError',e=>errors.push(e.message));
+const dom=new JSDOM(fs.readFileSync(path.join(__dirname,'../skills/watch/result-viewer.html'),'utf8'),{runScripts:'dangerously',virtualConsole:vc});
+const w=dom.window,d=w.document;
+const base={metadata:{title:'試験用'},modules:{script:{status:'ok'}},model_analyses:{video_essay:{result:{content_profile:{central_question:'なぜ？'},reusable_patterns:['比較する'],research:{meaning_sections:[{role:'main_topic',label:'主題',purpose:'問題を説明',start_ms:null,end_ms:null},{role:'subtopic',label:'例',purpose:'具体化'}]}}}}};
+(async()=>{
+ await w.load([{name:'old.json',size:1,text:async()=>JSON.stringify(base)}]);
+ assert.equal(d.querySelector('#creator').hidden,false);
+ assert.equal(d.querySelector('#observed').hidden,true);
+ assert.match(d.querySelector('#creatorContent').textContent,/以前の分析結果/);
+ assert.match(d.querySelector('#creatorContent').textContent,/なぜ？/);
+ assert.equal(d.querySelector('.flowSub').open,false);
+ assert.equal(d.querySelector('.analysisMeta').open,false);
+ const a=base.model_analyses.video_essay.result;
+ a.creation_review={question:'問い',answer:'答え',viewer_takeaway:'理解',checks:{audiovisual:{status:'unknown',finding:'音声未確認',evidence:[],check_next:'試聴する'}},technique_roles:[{technique:'地図',observation:'配置を表示',function:'位置関係を説明',basis:'sampled_frames',evidence:[],limitation:'静止画のみ'}],next_experiments:[{action:'地図を使う',reason:'関係を示す',verify:'位置関係を説明できるか',evidence:[],storyboard:{say:'場所の説明',show:'地図',hear:'音楽を抑える'}}]};
+ w.render(base);
+ const text=d.querySelector('#creatorContent').textContent;
+ assert.match(text,/位置関係を説明/);assert.match(text,/新しい制作提案/);assert.match(text,/判断材料が不足/);assert.doesNotMatch(text,/以前の分析結果/);
+ assert.equal(d.querySelectorAll('.experiment').length,1);
+ assert.equal(d.querySelectorAll('.creatorSection').length,5);
+ assert.equal(d.querySelector('.experiment details').open,false);
+ assert(w.comparisonRows(base).some(r=>r[1].includes('地図を使う')));
+ a.creation_review.question='<img src=x onerror=alert(1)>';
+ w.render(base);assert.equal(d.querySelectorAll('#creatorContent img').length,0);
+ const ids=[...d.querySelectorAll('[id]')].map(e=>e.id);assert.equal(ids.length,new Set(ids).size);
+ assert.deepEqual(errors,[]);dom.window.close();process.stdout.write('Creator view: default tab, legacy fallback, disclosure, evidence roles, experiments, comparison, safe text OK\n');
+})().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1;dom.window.close()});

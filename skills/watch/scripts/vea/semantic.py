@@ -150,3 +150,66 @@ Before recommending a missing explanation, check the entire transcript for it an
 INSTRUCTIONS += """
 Organize research.meaning_sections by meaning: introduction, main topics, subordinate explanations/examples (subtopic), and conclusion where present. Boundaries follow changes of question, topic, or argumentative role, never equal time slices, visual edits, or every subtitle cue. Give concise concrete labels and explain each section's purpose in the requested output language (Japanese by default). Use unique ids in narrative preorder. Top-level sections have parent_id null; subtopics reference a preceding main_topic id (maximum two levels). Do not invent an introduction or conclusion missing from an excerpt. Even untimed text can have meaningful sections: use null start_ms/end_ms when alignment is unavailable. For timed sections use only supported evidence times; do not make up precise boundaries. Legacy research.chapters should contain only the timed top-level meaning sections, and structure.chapters should describe the same top-level progression. Keep original source_excerpt fields verbatim; explanations and translated references should be Japanese and translations identified as such.
 """
+
+# Operational rubric inspired by the user's two readings, not a validated score.
+ASSESSMENT = obj({
+    "status": {"type": "string", "enum": ["supported", "needs_attention", "unknown", "not_applicable"]},
+    "finding": STRING,
+    "evidence": array(EVIDENCE),
+    "check_next": STRING,
+})
+SCHEMA["properties"]["creation_review"] = obj({
+    "question": STRING,
+    "answer": STRING,
+    "viewer_takeaway": STRING,
+    "checks": obj({name: deepcopy(ASSESSMENT) for name in (
+        "focus", "argument", "progression", "audiovisual", "editing", "verification")}),
+    "technique_roles": array(obj({
+        "technique": STRING,
+        "observation": STRING,
+        "function": STRING,
+        "basis": {"type": "string", "enum": ["transcript", "sampled_frames", "measurements", "unknown"]},
+        "evidence": array(EVIDENCE),
+        "limitation": STRING,
+    })),
+    "next_experiments": array(obj({
+        "action": STRING,
+        "reason": STRING,
+        "evidence": array(EVIDENCE),
+        "storyboard": obj({"say": STRING, "show": STRING, "hear": STRING}),
+        "verify": STRING,
+    })),
+})
+SCHEMA["required"].append("creation_review")
+INSTRUCTIONS += """
+Creation review rubric (our operational interpretation of Macalester's Video Essays 101
+and Glitch's 2019 The Art of YouTube Criticism; not a validated performance scale):
+Write concise, accessible Japanese when output_language is ja. Findings should be one or
+two short sentences. Identify the central question, the video's answer, and what the
+viewer can understand afterwards. If unavailable, explicitly say unknown. An excerpt
+cannot establish the full video's conclusion.
+Assess six distinct areas: focus (a useful question); argument (claims, supporting
+sources, and interpretation distinguished; fair contextual criticism rather than flaw
+hunting); progression (meaningful sections build understanding); audiovisual (images
+and sound perform explanatory/evidentiary/experiential roles); editing (changes or holds
+serve a communicative purpose, not simply frequent cuts); verification (what can be
+checked independently and what still needs checking). A sound argument need not follow
+one rigid template. Unknown is not a failure; not_applicable is allowed. Never invent
+missing issues just to provide criticism. Supported means supported by supplied material,
+not externally fact-checked or proven effective with audiences. Do not infer copyright
+permission, legality, actual comprehension, CTR, retention or creator intent.
+For technique_roles give at most five concrete examples: observation is what the source
+shows, function is a cautiously inferred role in explanation, argument or experience.
+Attach evidence, label the basis and state limits. Sparse stills cannot prove motion,
+transition timing or pacing; cut counts cannot establish quality. You have not heard
+audio: transcripts and sound labels cannot establish music mood, delivery, audibility
+or precise synchronization. Mark these unknown/check_next unless direct supporting
+material is explicitly supplied. Do not claim to have listened to the video.
+Give at most three next_experiments for the user's own production, not unsupported
+accusations about the reference video. Each needs an action, why it might help,
+a source example when available, and a concrete storyboard (say/show/hear). Storyboard
+content is a NEW PROPOSAL, never an observation about the source. Suggest a way to
+check the experiment without promising improved views. Never present theatrical or
+emotional impact as evidence of factual truth. Timing follows the existing evidence
+rules: null when unknown, no fabricated precise alignment.
+"""
