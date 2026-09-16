@@ -240,6 +240,12 @@ def _post_whisper(endpoint: str, api_key: str, model: str, audio_path: Path) -> 
         "response_format": "verbose_json",
         "temperature": "0",
     }
+    language = os.environ.get("WATCH_TRANSCRIPT_LANGUAGE", "auto").strip().lower()
+    if language != "auto":
+        if len(language) != 2 or not language.isascii() or not language.isalpha():
+            raise ValueError("WATCH_TRANSCRIPT_LANGUAGE must be auto or a two-letter language code")
+        fields["language"] = language
+    # Transcribe in the source language; never use the translations endpoint.
     body, boundary = _build_multipart(fields, audio_path)
     headers = {
         "Authorization": f"Bearer {api_key}",
