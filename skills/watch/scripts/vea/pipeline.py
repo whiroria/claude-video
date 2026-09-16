@@ -32,6 +32,7 @@ from .extractors import (
 from .models import Event, feature, now, provenance
 from .performance import date, metrics, relative
 from .semantic import INSTRUCTIONS, SCHEMA
+from .subtitle_translation import japanese_display
 from .synchronization import beat_sync, chapter_music_sync
 
 FEATURE_GROUPS = {
@@ -781,6 +782,13 @@ def analyze(
                 if any(f["status"] != "ok" for f in pm.values())
                 else "ok"
             }
+        translation = japanese_display(
+            text, model, enabled=bool(text) and language.startswith("ja") and not offline
+            and bool(load_openai_api_key()) and os.environ.get("WATCH_TRANSLATE_SUBTITLES", "1") != "0",
+        )
+        modules["subtitle_translation"] = {"status": translation["status"]}
+        if translation["status"] == "failed":
+            warnings.append(translation["message"])
         result = {
             "schema_version": VERSION,
             "run_id": run_id,
@@ -789,7 +797,9 @@ def analyze(
             "started_at": started,
             "completed_at": now(),
             "metadata": metadata,
-            "transcript": {"text": text, "source": tsrc, "provenance": tp}
+            "transcript": {"text": text, "source": tsrc, "provenance": tp,
+                           "text_ja": translation.get("text_ja"),
+                           "translation": {k: v for k, v in translation.items() if k != "text_ja"}}
             if text
             else None,
             "timeline": sorted(timeline, key=lambda e: (e["start_ms"], e["end_ms"])),

@@ -179,11 +179,13 @@ def main():
     ttk.Label(settings, text='自動文字起こしの音声言語').grid(row=6, column=0, sticky='w', pady=6)
     ttk.Combobox(settings, textvariable=speech_language, values=('自動判定', '日本語', '英語'), state='readonly').grid(row=6, column=1, sticky='ew')
     ttk.Label(settings, text='日本語音声なら「日本語」を選択。字幕ファイル・コピペ・取得済み字幕はそのまま使います。', wraplength=690).grid(row=7, column=0, columnspan=3, sticky='w')
+    translate_subtitles = tk.BooleanVar(value=True)
+    ttk.Checkbutton(settings, text='字幕を日本語に翻訳して表示（原文も保持・翻訳時は追加API処理）', variable=translate_subtitles).grid(row=10, column=0, columnspan=3, sticky='w', pady=6)
     rhythm_mode = tk.StringVar(value='従来：画面全体・感度低')
     ttk.Label(settings, text='画面切替の検出').grid(row=8, column=0, sticky='w', pady=6)
     ttk.Combobox(settings, textvariable=rhythm_mode, values=('従来：画面全体・感度低', '画面全体・感度高', '下部字幕あり：上75%・感度高'), state='readonly', width=32).grid(row=8, column=1, sticky='ew')
     ttk.Label(settings, text='下部字幕あり：画面の下25%を除外します。感度を上げると動きの誤検出も増えます。', wraplength=690).grid(row=9, column=0, columnspan=3, sticky='w')
-    ttk.Label(rhythm_settings, text='連続映像から切替候補を検出し、部分変化・動きと分けて前後の画像を表示します。\nこのタブの「編集リズムだけ解析」はAPIキー・字幕が不要です。動画ファイルを選んで使います。', wraplength=690).grid(row=0, column=0, columnspan=3, sticky='w', pady=10)
+    ttk.Label(rhythm_settings, text='背景の切替候補だけを保存します。部分画像の追加・字幕・パンやズームは記録対象外です。\nこのタブの「編集リズムだけ解析」はAPIキー・字幕が不要です。動画ファイルを選んで使います。', wraplength=690).grid(row=0, column=0, columnspan=3, sticky='w', pady=10)
     field(rhythm_settings, 1, 'rhythm_weights', '切替検出モデル', [('TransNet V2 weights', '*.npz')])
     for candidate in (SKILL / 'models' / 'transnetv2-weights.npz', Path.home() / 'Downloads' / 'transnetv2-weights.npz'):
         if candidate.is_file():
@@ -192,7 +194,7 @@ def main():
     ttk.Label(rhythm_settings, text='確認する画面の範囲').grid(row=2, column=0, sticky='w', pady=6)
     ttk.Combobox(rhythm_settings, textvariable=rhythm_region, values=('画面全体', '下部字幕を除外（上80%）'), state='readonly').grid(row=2, column=1, sticky='ew')
     ttk.Label(rhythm_settings, text='下部20%を除外すると、その領域の画像変化も対象外です。字幕が重ならない動画では「画面全体」を選んでください。', wraplength=690).grid(row=3, column=0, columnspan=3, sticky='w', pady=6)
-    use_rhythm = tk.BooleanVar(value=False)
+    use_rhythm = tk.BooleanVar(value=bool(values['rhythm_weights'].get()))
     ttk.Checkbutton(rhythm_settings, text='通常の「分析する」にも新方式の編集リズムを追加', variable=use_rhythm).grid(row=4, column=0, columnspan=3, sticky='w', pady=6)
     ttk.Label(rhythm_settings, text='初回は「必要なソフトを準備」を押してください。インターネットから解析用の追加ソフトを取得します。\n切替検出モデルは配布された transnetv2-weights.npz を選択します。解析自体はPC内で行います。\nCPUで処理するため、長い動画は数分以上かかります。検出結果は未確認の候補です。', wraplength=690).grid(row=5, column=0, columnspan=3, sticky='w', pady=10)
     detailed = tk.BooleanVar(value=False)
@@ -291,6 +293,7 @@ def main():
                 raise ValueError('全編詳細分析はAIを使います。「ローカル計測のみ」を外してください。')
             rhythm_options = get_rhythm_options() if use_rhythm.get() else None
             env = dict(os.environ, PYTHONUTF8='1')
+            env['WATCH_TRANSLATE_SUBTITLES'] = '1' if translate_subtitles.get() else '0'
             env['WATCH_TRANSCRIPT_LANGUAGE'] = {'自動判定': 'auto', '日本語': 'ja', '英語': 'en'}[speech_language.get()]
             if key: env['OPENAI_API_KEY'] = key
             output.parent.mkdir(parents=True, exist_ok=True)

@@ -325,11 +325,18 @@ def snapshot(path, timestamp, width=384):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), "data:image/jpeg;base64," + base64.b64encode(p.stdout).decode("ascii")
 
 
+def is_background_candidate(label, measurement):
+    """Broad residual change is a candidate, not semantic proof of a new background."""
+    return label in ("cut", "gradual", "uncertain") and measurement.get("changed_area", 0) >= .3 and measurement.get("changed_tiles", 0) >= .55
+
+
 def build_events(path, candidates, rows, top_fraction, start, seconds, progress=lambda _: None):
     import cv2
     candidates = [dict(e) for e in candidates]
     neural = list(candidates)
     for regional in regional_candidates(rows):
+        if regional["source"] == "registered_motion":
+            continue  # No snapshots or event records for pans/zooms alone.
         # A regional cluster may cover several neural events during moving footage.
         # Never collapse those events into a single long pseudo-shot.
         matches = [e for e in neural if e["start_ms"] - 300 <= regional["peak_ms"] <= e["end_ms"] + 300]
@@ -340,10 +347,14 @@ def build_events(path, candidates, rows, top_fraction, start, seconds, progress=
             matches[0]['context_start_ms'] = regional['start_ms']
             matches[0]['context_end_ms'] = regional['end_ms']
         if not matches:
-            candidates.append(regional)
+            nearby = [r for r in rows if abs(r["time_ms"] - regional["peak_ms"]) <= 300]
+            if any(r.get("changed_area", 0) >= .3 and r.get("changed_tiles", 0) >= .55 for r in nearby):
+                candidates.append(regional)
     candidates.sort(key=lambda e: e["peak_ms"])
     events = []
     for i, e in enumerate(candidates):
+        if e["source"] == "registered_motion":
+            continue
         left = max(start, min(e["start_ms"], e.get('context_start_ms', e['start_ms']))/1000 - .15)
         right = min(start+seconds-.05, max(e["end_ms"], e.get('context_end_ms', e['end_ms']))/1000 + .15)
         before, before_url = snapshot(path, left)
@@ -355,6 +366,8 @@ def build_events(path, candidates, rows, top_fraction, start, seconds, progress=
         # Do not label a multi-second cluster in live footage as a single edit.
         if e["source"] == "regional_difference" and e["end_ms"]-e["start_ms"] > 2500:
             label = "motion" if measurement["motion_px"] >= .5 else "uncertain"
+        if not is_background_candidate(label, measurement):
+            continue
         e.update(id=f"edit-{i+1:04}", label=label, measurement=measurement,
                  review_status="unreviewed", before_ms=round(left*1000), after_ms=round(right*1000),
                  before_image=before_url, after_image=after_url, difference_image=difference_image)
@@ -377,10 +390,10 @@ def review(path, weights, top_fraction=.8, start=0, seconds=None, progress=lambd
     candidates = transition_candidates(predictions, start)
     rows = regional_scan(path, top_fraction, start, seconds, progress)
     events = build_events(path, candidates, rows, top_fraction, start, seconds, progress)
-    return dict(status="ok", version=1, analyzed_at=now(),
+    return dict(status="ok", version=2, analyzed_at=now(),
                 start_ms=round(start*1000), end_ms=round((start+seconds)*1000),
                 source=str(Path(path).resolve()), source_size_bytes=Path(path).stat().st_size,
-                parameters=dict(neural_fps=30, regional_fps=10, top_fraction=top_fraction,
+                parameters=dict(scope="background_only", neural_fps=30, regional_fps=10, top_fraction=top_fraction,
                                 analyzed_frames=len(predictions), regional_comparisons=len(rows),
                                 model="TransNet V2", upstream_revision=UPSTREAM_REVISION,
                                 weights_sha256=hashlib.sha256(Path(weights).read_bytes()).hexdigest(),
@@ -390,7 +403,8 @@ def review(path, weights, top_fraction=.8, start=0, seconds=None, progress=lambd
                              "徐々に切り替わる候補にはディゾルブ・ワイプ等が含まれ、種類は未確定です。",
                              "開始・終了は検出の支持区間です。実際の編集操作の開始・終了とは限りません。",
                              "下部を除外した場合、その領域の字幕や画像の変化は評価しません。",
-                             "部分変化は写真・図解・文字・物体の動きを含み、意味の分類には人の照合が必要です。",
+                             "背景切替候補だけを保存します。部分画像・字幕・パンやズームだけの変化は除外します。",
+                             "画面差分による推定なので、大きな前景の追加と背景変更を完全には区別できません。",
                              "30fpsへ変換して全時間帯を解析し、部分変化は10fpsで照合します。短い変化は見逃す場合があります。"])
 
 

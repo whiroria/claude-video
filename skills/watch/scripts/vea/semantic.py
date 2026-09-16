@@ -56,6 +56,16 @@ SCHEMA["properties"]["research"] = obj(
                 }
             )
         ),
+        "meaning_sections": array(obj({
+            "id": STRING,
+            "parent_id": {"type": ["string", "null"]},
+            "role": {"type": "string", "enum": ["introduction", "main_topic", "subtopic", "conclusion"]},
+            "label": STRING,
+            "purpose": STRING,
+            "start_ms": {"type": ["integer", "null"]},
+            "end_ms": {"type": ["integer", "null"]},
+            "evidence": array(EVIDENCE),
+        })),
         "chapters": array(
             obj(
                 {
@@ -135,4 +145,8 @@ INSTRUCTIONS += """
 Audit transcript quality separately from creator quality. In transcript_quality.issues, list only concrete suspected recognition problems supported by exact source_excerpt copied verbatim from the supplied transcript (never translate this field). Give a reason; suggested_reading is tentative, null if ambiguous. Do not silently repair numbers or names. Do not infer that the creator said a mistaken word from faulty ASR. An empty issues list is not verification of accuracy. Use null timestamps for untimed text; never fabricate alignment.
 In all research evidence, transcript_reference is a paraphrase/reference, not a certified verbatim quotation. Label translations and summaries accordingly. The original transcript is the only source text; never present reconstructed Japanese from English ASR as an original Japanese quote.
 Before recommending a missing explanation, check the entire transcript for it and acknowledge existing treatment. Do not claim absent on-screen citations, diagrams, or labels from unreadable or sparse images. Phrase unverified improvements conditionally, stating what needs checking.
+"""
+
+INSTRUCTIONS += """
+Organize research.meaning_sections by meaning: introduction, main topics, subordinate explanations/examples (subtopic), and conclusion where present. Boundaries follow changes of question, topic, or argumentative role, never equal time slices, visual edits, or every subtitle cue. Give concise concrete labels and explain each section's purpose in the requested output language (Japanese by default). Use unique ids in narrative preorder. Top-level sections have parent_id null; subtopics reference a preceding main_topic id (maximum two levels). Do not invent an introduction or conclusion missing from an excerpt. Even untimed text can have meaningful sections: use null start_ms/end_ms when alignment is unavailable. For timed sections use only supported evidence times; do not make up precise boundaries. Legacy research.chapters should contain only the timed top-level meaning sections, and structure.chapters should describe the same top-level progression. Keep original source_excerpt fields verbatim; explanations and translated references should be Japanese and translations identified as such.
 """

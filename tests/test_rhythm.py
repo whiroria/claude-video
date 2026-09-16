@@ -82,3 +82,27 @@ def test_unicode_video_stream_decodes_at_declared_rate(tmp_path):
     decoded=list(frames(path,48,27,30,.8,0,1))
     assert len(decoded)==30
     assert all(f.shape==(27,48,3) for f in decoded)
+
+
+def test_background_only_skips_motion_before_extracting_images(monkeypatch):
+    import vea.rhythm as rhythm
+    def snapshot(*a, **kw):
+        raise AssertionError('Motion must not extract images')
+    monkeypatch.setattr(rhythm, 'snapshot', snapshot)
+    e = dict(start_ms=0, end_ms=1000, peak_ms=500, source='registered_motion')
+    assert build_events('video', [e], [], .8, 0, 2) == []
+
+
+def test_background_only_rejects_foreground_insertion_but_keeps_replacement(monkeypatch):
+    import vea.rhythm as rhythm
+    a = textured_frame()
+    b = a.copy()
+    b[25:70,55:110] = [255,10,20]
+    e = dict(start_ms=500,end_ms=600,peak_ms=550,source='transnetv2',transition='cut')
+    for after, expected in [(b, 0), (255-a, 1)]:
+        shots = iter([(a, 'before'), (after, 'after')])
+        monkeypatch.setattr(rhythm, 'snapshot', lambda *args: next(shots))
+        events = build_events('video', [e], [], 1, 0, 2)
+        assert len(events) == expected
+        if events:
+            assert events[0]['label'] == 'cut'
