@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import uuid
 import webbrowser
@@ -109,7 +110,8 @@ def make_report(result, destination):
     data = json.loads(result.read_text(encoding='utf-8-sig'))
     payload = json.dumps(data, ensure_ascii=False).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
     viewer = (SKILL / 'result-viewer.html').read_text(encoding='utf-8')
-    script = '<script type="application/json" id="desktop-data">' + payload + '</script><script>load([{name:"result.json",size:1,text:async()=>document.getElementById("desktop-data").textContent}]);</script>'
+    open_rhythm = 'document.getElementById("tab-media").click();' if data.get('editing_review') and 'script' not in data.get('modules', {}) else ''
+    script = '<script type="application/json" id="desktop-data">' + payload + '</script><script>load([{name:"result.json",size:1,text:async()=>document.getElementById("desktop-data").textContent}]).then(()=>{' + open_rhythm + '});</script>'
     destination.write_text(viewer.replace('</html>', script + '</html>'), encoding='utf-8')
     return data
 
@@ -131,6 +133,9 @@ def main():
     inputs, settings = ttk.Frame(pages, padding=12), ttk.Frame(pages, padding=12)
     pages.add(inputs, text='動画・字幕')
     pages.add(settings, text='API・音声設定')
+    rhythm_settings = ttk.Frame(pages, padding=12)
+    rhythm_settings.columnconfigure(1, weight=1)
+    pages.add(rhythm_settings, text='編集リズム（新方式）')
     for parent in (inputs, settings): parent.columnconfigure(1, weight=1)
     values = {}
     def field(parent, row, name, label, kind=None, secret=False):
@@ -178,6 +183,18 @@ def main():
     ttk.Label(settings, text='画面切替の検出').grid(row=8, column=0, sticky='w', pady=6)
     ttk.Combobox(settings, textvariable=rhythm_mode, values=('従来：画面全体・感度低', '画面全体・感度高', '下部字幕あり：上75%・感度高'), state='readonly', width=32).grid(row=8, column=1, sticky='ew')
     ttk.Label(settings, text='下部字幕あり：画面の下25%を除外します。感度を上げると動きの誤検出も増えます。', wraplength=690).grid(row=9, column=0, columnspan=3, sticky='w')
+    ttk.Label(rhythm_settings, text='連続映像から切替候補を検出し、部分変化・動きと分けて前後の画像を表示します。\nこのタブの「編集リズムだけ解析」はAPIキー・字幕が不要です。動画ファイルを選んで使います。', wraplength=690).grid(row=0, column=0, columnspan=3, sticky='w', pady=10)
+    field(rhythm_settings, 1, 'rhythm_weights', '切替検出モデル', [('TransNet V2 weights', '*.npz')])
+    for candidate in (SKILL / 'models' / 'transnetv2-weights.npz', Path.home() / 'Downloads' / 'transnetv2-weights.npz'):
+        if candidate.is_file():
+            values['rhythm_weights'].set(str(candidate)); break
+    rhythm_region = tk.StringVar(value='下部字幕を除外（上80%）')
+    ttk.Label(rhythm_settings, text='確認する画面の範囲').grid(row=2, column=0, sticky='w', pady=6)
+    ttk.Combobox(rhythm_settings, textvariable=rhythm_region, values=('画面全体', '下部字幕を除外（上80%）'), state='readonly').grid(row=2, column=1, sticky='ew')
+    ttk.Label(rhythm_settings, text='下部20%を除外すると、その領域の画像変化も対象外です。字幕が重ならない動画では「画面全体」を選んでください。', wraplength=690).grid(row=3, column=0, columnspan=3, sticky='w', pady=6)
+    use_rhythm = tk.BooleanVar(value=False)
+    ttk.Checkbutton(rhythm_settings, text='通常の「分析する」にも新方式の編集リズムを追加', variable=use_rhythm).grid(row=4, column=0, columnspan=3, sticky='w', pady=6)
+    ttk.Label(rhythm_settings, text='初回は「必要なソフトを準備」を押してください。インターネットから解析用の追加ソフトを取得します。\n切替検出モデルは配布された transnetv2-weights.npz を選択します。解析自体はPC内で行います。\nCPUで処理するため、長い動画は数分以上かかります。検出結果は未確認の候補です。', wraplength=690).grid(row=5, column=0, columnspan=3, sticky='w', pady=10)
     detailed = tk.BooleanVar(value=False)
     ttk.Checkbutton(inputs, text='全編詳細分析（60秒ごとに4枚・追加API料金と待ち時間が発生）', variable=detailed).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
     status = tk.StringVar(value='動画ファイルかYouTube URLを指定してください。字幕は選択中のタブの入力だけを使います。')
@@ -192,7 +209,7 @@ def main():
         OUTPUT.mkdir(parents=True, exist_ok=True)
         if sys.platform == 'win32': os.startfile(str(OUTPUT))
         else: webbrowser.open(OUTPUT.as_uri())
-    def run_job(cmd, env, output, model, labels, source, reference_url, use_detailed):
+    def run_job(cmd, env, output, model, labels, source, reference_url, use_detailed, rhythm_options=None):
         try:
             # Keep complete child logs off disk: an API error may echo part of a key.
             result = subprocess.run(cmd, cwd=SCRIPTS, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -229,6 +246,16 @@ def main():
                         events.put(('note', '全編詳細分析に未完了の区間があります。結果画面で確認してください。'))
                 else:
                     events.put(('note', '全編詳細分析用の動画が見つかりません。基本分析を表示します。'))
+            if rhythm_options:
+                data = json.loads(output.read_text(encoding='utf-8'))
+                frames = [e for e in data.get('timeline', []) if e.get('event_type') == 'frame']
+                local_video = source if Path(source).is_file() else (frames[0].get('provenance', {}).get('source') if frames else None)
+                if not local_video or not Path(local_video).is_file():
+                    raise RuntimeError('編集リズムを照合する動画が見つかりません。動画ファイルを指定してください。')
+                from vea.rhythm import review
+                data['editing_review'] = review(local_video, *rhythm_options, progress=lambda text: events.put(('progress', text)))
+                data['modules']['editing_review'] = {'status': 'ok'}
+                output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
             report = output.parent / 'report.html'
             data = make_report(output, report)
             issues = [str(e.get('module', '処理')) for e in data.get('errors', [])]
@@ -262,6 +289,7 @@ def main():
             if not offline.get() and not key: raise ValueError('APIキーを入力するか「ローカル計測のみ」にチェックしてください。')
             if detailed.get() and offline.get():
                 raise ValueError('全編詳細分析はAIを使います。「ローカル計測のみ」を外してください。')
+            rhythm_options = get_rhythm_options() if use_rhythm.get() else None
             env = dict(os.environ, PYTHONUTF8='1')
             env['WATCH_TRANSCRIPT_LANGUAGE'] = {'自動判定': 'auto', '日本語': 'ja', '英語': 'en'}[speech_language.get()]
             if key: env['OPENAI_API_KEY'] = key
@@ -276,8 +304,71 @@ def main():
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
             progress.start()
-            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url'], detailed.get()), daemon=True).start()
+            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url'], detailed.get(), rhythm_options), daemon=True).start()
         except (ValueError, OSError) as exc: messagebox.showerror('入力を確認してください', str(exc))
+
+    def get_rhythm_options():
+        import importlib.util
+        if any(importlib.util.find_spec(name) is None for name in ('numpy', 'cv2', 'torch')):
+            raise ValueError('「編集リズム（新方式）」タブの「必要なソフトを準備」を先に押してください。')
+        weights = values['rhythm_weights'].get().strip()
+        if not Path(weights).is_file():
+            raise ValueError('切替検出モデルに transnetv2-weights.npz を選んでください。')
+        return weights, (.8 if rhythm_region.get().startswith('下部') else 1.0)
+
+    def rhythm_only():
+        if state['busy']: return
+        try:
+            options = get_rhythm_options()
+            video = values['video'].get().strip()
+            if not Path(video).is_file():
+                raise ValueError('「動画・字幕」タブで動画ファイルを選んでください。')
+            if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
+                raise ValueError('ffmpeg / ffprobeが見つかりません。')
+        except (ValueError, OSError) as exc:
+            messagebox.showerror('入力を確認してください', str(exc)); return
+        output = OUTPUT / uuid.uuid4().hex / 'rhythm-result.json'
+        state['busy'] = True; state['note'] = ''
+        start_button.config(state='disabled'); result_button.config(state='disabled')
+        progress.start(); status.set('編集リズムを解析しています。API料金は発生しません。')
+        def worker():
+            try:
+                cmd = [sys.executable, '-X', 'utf8', '-m', 'vea.rhythm', video,
+                       '--weights', options[0], '--top-fraction', str(options[1]), '--out', str(output)]
+                with tempfile.TemporaryFile() as err:
+                    p = subprocess.Popen(cmd, cwd=SCRIPTS, stdout=subprocess.PIPE, stderr=err,
+                                         text=True, encoding='utf-8', errors='replace',
+                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                    for line in p.stdout:
+                        if not line.startswith('{'): events.put(('progress', line.strip()))
+                    code = p.wait(); p.stdout.close()
+                    if code:
+                        err.seek(0)
+                        raise RuntimeError(err.read().decode('utf-8', 'replace')[-6000:])
+                events.put(('done', (output.with_suffix('.html'), '編集リズムの候補を作成しました。「音声・映像」タブで前後の画像を確認してください。')))
+            except Exception as exc:
+                events.put(('error', str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def setup_rhythm():
+        if state['busy']: return
+        state['busy'] = True; state['note'] = ''
+        start_button.config(state='disabled'); progress.start()
+        status.set('解析用の追加ソフトを取得しています。初回は数分かかることがあります。')
+        def worker():
+            try:
+                commands = [[sys.executable, '-m', 'pip', 'install', 'numpy', 'opencv-python-headless'],
+                            [sys.executable, '-m', 'pip', 'install', 'torch>=2.6', '--index-url', 'https://download.pytorch.org/whl/cpu']]
+                for command in commands:
+                    p = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800,
+                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                    if p.returncode: raise RuntimeError(p.stderr[-5000:])
+                events.put(('setup_done', '準備できました。モデルを選択し、「編集リズムだけ解析」を押してください。'))
+            except Exception as exc:
+                events.put(('error', '追加ソフトの準備に失敗しました。\n' + str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+    ttk.Button(rhythm_settings, text='必要なソフトを準備（初回のみ）', command=setup_rhythm).grid(row=6, column=0, columnspan=2, sticky='w', pady=8)
+    ttk.Button(rhythm_settings, text='編集リズムだけ解析', command=rhythm_only).grid(row=7, column=0, columnspan=2, sticky='w', pady=8)
     start_button = ttk.Button(frame, text='分析する', command=start)
     start_button.grid(row=12, column=0, pady=16, sticky='w')
     result_button = ttk.Button(frame, text='結果を開く', command=open_result, state='disabled')
@@ -304,7 +395,9 @@ def main():
             elif kind == 'note': state['note'] = value
             else:
                 state['busy'] = False; progress.stop(); start_button.config(state='normal')
-                if kind == 'done':
+                if kind == 'setup_done':
+                    status.set(value)
+                elif kind == 'done':
                     state['report'], text = value
                     status.set(text + ' ' + state.get('note', ''))
                     result_button.config(state='normal'); open_result()
