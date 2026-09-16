@@ -204,7 +204,7 @@ def main():
     progress = ttk.Progressbar(frame, mode='indeterminate')
     progress.grid(row=11, column=0, columnspan=3, sticky='ew')
     events = queue.Queue()
-    state = {'busy': False, 'report': None}
+    state = {'busy': False, 'report': None, 'job': None, 'closing': False}
     def open_result():
         if state['report']: webbrowser.open(state['report'].as_uri())
     def open_comparison():
@@ -213,64 +213,25 @@ def main():
         OUTPUT.mkdir(parents=True, exist_ok=True)
         if sys.platform == 'win32': os.startfile(str(OUTPUT))
         else: webbrowser.open(OUTPUT.as_uri())
-    def run_job(cmd, env, output, model, labels, source, reference_url, use_detailed, rhythm_options=None):
-        try:
-            # Keep complete child logs off disk: an API error may echo part of a key.
-            result = subprocess.run(cmd, cwd=SCRIPTS, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-            if result.returncode or not output.exists():
-                raise RuntimeError(failure_details(result.stdout, result.stderr, env.get('OPENAI_API_KEY', '')))
-            # Keep credential fragments out of the delivered JSON and HTML.
-            data = json.loads(output.read_text(encoding='utf-8'))
-            from vea.detailed_review import attach_previews, review
-            attach_previews(data)
-            attach_reference(data, reference_url)
-            for error in data.get('errors', []):
-                message = str(error.get('message', ''))
-                if 'Incorrect API key provided' in message:
-                    message = 'OpenAI APIキーが拒否されました。キーを確認してください。'
-                elif env.get('OPENAI_API_KEY'):
-                    message = message.replace(env['OPENAI_API_KEY'], '[API key removed]')
-                error['message'] = message
-            output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-            if model:
-                events.put(('progress', '音声・音楽の区間を推定中です…'))
-                data = json.loads(output.read_text(encoding='utf-8'))
-                duration = data['metadata']['duration_ms'] / 1000
-                audio_out = output.with_name('audio-result.json')
-                audio = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPTS / 'vea' / 'audio_timeline.py'), source, '--result', str(output), '--model', model, '--labels', labels, '--seconds', str(duration), '--out', str(audio_out)], cwd=SCRIPTS, env=env, capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                if audio.returncode == 0: output = audio_out
-                else: events.put(('note', '音声の区間推定は失敗しました。基本分析の結果を表示します。'))
-            if use_detailed:
-                data = json.loads(output.read_text(encoding='utf-8'))
-                frames = [e for e in data.get('timeline', []) if e.get('event_type') == 'frame']
-                video = frames[0].get('provenance', {}).get('source') if frames else None
-                if video and Path(video).is_file():
-                    data = review(data, video, output, lambda text: events.put(('progress', text)), api_key=env.get('OPENAI_API_KEY'))
-                    if any(e['status'] != 'ok' for e in data['detailed_review']['intervals']):
-                        events.put(('note', '全編詳細分析に未完了の区間があります。結果画面で確認してください。'))
-                else:
-                    events.put(('note', '全編詳細分析用の動画が見つかりません。基本分析を表示します。'))
-            if rhythm_options:
-                data = json.loads(output.read_text(encoding='utf-8'))
-                frames = [e for e in data.get('timeline', []) if e.get('event_type') == 'frame']
-                local_video = source if Path(source).is_file() else (frames[0].get('provenance', {}).get('source') if frames else None)
-                if not local_video or not Path(local_video).is_file():
-                    raise RuntimeError('編集リズムを照合する動画が見つかりません。動画ファイルを指定してください。')
-                from vea.rhythm import review
-                data['editing_review'] = review(local_video, *rhythm_options, progress=lambda text: events.put(('progress', text)))
-                data['modules']['editing_review'] = {'status': 'ok'}
-                output.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-            report = output.parent / 'report.html'
-            data = make_report(output, report)
-            issues = [str(e.get('module', '処理')) for e in data.get('errors', [])]
-            ai_ok = data.get('modules', {}).get('script', {}).get('status') == 'ok'
-            message = ('分析が終了しました。AI台本分析：' + ('完了' if ai_ok else '未完了 / 未実行') + '。')
-            if issues: message += ' エラーのある項目：' + ', '.join(issues) + '。'
-            if data.get('status') == 'partial': message += ' 一部の分析は未実施です。詳細は結果画面で確認できます。'
-            events.put(('done', (report, message)))
-        except Exception as exc:
-            # Do not display upstream exception bodies containing credentials.
-            events.put(('error', str(exc) if isinstance(exc, RuntimeError) else '処理中に問題が発生しました。入力ファイルと必要なソフトを確認してください。'))
+    def launch(config, env):
+        from desktop_jobs import Job
+        job = Job()
+        state['job'] = job
+        cancel_button.config(state='normal')
+        threading.Thread(target=job.run, args=(config, env, events), daemon=True).start()
+
+    def cancel():
+        job = state.get('job')
+        if not state['busy'] or job is None: return
+        cancel_button.config(state='disabled')
+        status.set('中止しています。動画取得・解析の子プロセスも停止します…')
+        def stop():
+            try:
+                job.cancel()
+            except (OSError, subprocess.SubprocessError):
+                events.put(('stop_failed', '停止できませんでした。「分析を中止」を再度押してください。'))
+        threading.Thread(target=stop, daemon=True).start()
+
     def start():
         if state['busy']: return
         try:
@@ -309,7 +270,7 @@ def main():
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
             progress.start()
-            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url'], detailed.get(), rhythm_options), daemon=True).start()
+            launch({'kind': 'analysis', 'args': dict(cmd=cmd, output=str(output), model=v['model'], labels=v['labels'], source=v['source'], reference_url=v['url'], use_detailed=detailed.get(), rhythm_options=rhythm_options)}, env)
         except (ValueError, OSError) as exc: messagebox.showerror('入力を確認してください', str(exc))
 
     def get_rhythm_options():
@@ -336,44 +297,18 @@ def main():
         state['busy'] = True; state['note'] = ''
         start_button.config(state='disabled'); result_button.config(state='disabled')
         progress.start(); status.set('編集リズムを解析しています。API料金は発生しません。')
-        def worker():
-            try:
-                cmd = [sys.executable, '-X', 'utf8', '-m', 'vea.rhythm', video,
-                       '--weights', options[0], '--top-fraction', str(options[1]), '--out', str(output)]
-                with tempfile.TemporaryFile() as err:
-                    p = subprocess.Popen(cmd, cwd=SCRIPTS, stdout=subprocess.PIPE, stderr=err,
-                                         text=True, encoding='utf-8', errors='replace',
-                                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                    for line in p.stdout:
-                        if not line.startswith('{'): events.put(('progress', line.strip()))
-                    code = p.wait(); p.stdout.close()
-                    if code:
-                        err.seek(0)
-                        raise RuntimeError(err.read().decode('utf-8', 'replace')[-6000:])
-                events.put(('done', (output.with_suffix('.html'), '編集リズムの候補を作成しました。「音声・映像」タブで前後の画像を確認してください。')))
-            except Exception as exc:
-                events.put(('error', str(exc)))
-        threading.Thread(target=worker, daemon=True).start()
+        launch({'kind': 'rhythm', 'video': video, 'options': options, 'output': str(output)}, dict(os.environ, PYTHONUTF8='1'))
 
     def setup_rhythm():
         if state['busy']: return
         state['busy'] = True; state['note'] = ''
         start_button.config(state='disabled'); progress.start()
         status.set('解析用の追加ソフトを取得しています。初回は数分かかることがあります。')
-        def worker():
-            try:
-                commands = [[sys.executable, '-m', 'pip', 'install', 'numpy', 'opencv-python-headless'],
-                            [sys.executable, '-m', 'pip', 'install', 'torch>=2.6', '--index-url', 'https://download.pytorch.org/whl/cpu']]
-                for command in commands:
-                    p = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=1800,
-                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                    if p.returncode: raise RuntimeError(p.stderr[-5000:])
-                events.put(('setup_done', '準備できました。モデルを選択し、「編集リズムだけ解析」を押してください。'))
-            except Exception as exc:
-                events.put(('error', '追加ソフトの準備に失敗しました。\n' + str(exc)))
-        threading.Thread(target=worker, daemon=True).start()
+        launch({'kind': 'setup'}, dict(os.environ, PYTHONUTF8='1'))
     ttk.Button(rhythm_settings, text='必要なソフトを準備（初回のみ）', command=setup_rhythm).grid(row=6, column=0, columnspan=2, sticky='w', pady=8)
     ttk.Button(rhythm_settings, text='編集リズムだけ解析', command=rhythm_only).grid(row=7, column=0, columnspan=2, sticky='w', pady=8)
+    cancel_button = ttk.Button(frame, text='分析を中止', command=cancel, state='disabled')
+    cancel_button.grid(row=14, column=0, pady=6, sticky='w')
     start_button = ttk.Button(frame, text='分析する', command=start)
     start_button.grid(row=12, column=0, pady=16, sticky='w')
     result_button = ttk.Button(frame, text='結果を開く', command=open_result, state='disabled')
@@ -397,14 +332,29 @@ def main():
     def poll():
         while not events.empty():
             kind, value = events.get()
+            if kind == 'stop_failed':
+                state['closing'] = False
+                cancel_button.config(state='normal'); status.set(value)
+                continue
+            if kind in ('done', 'error', 'setup_done') and state.get('job') and state['job'].cancelled.is_set():
+                kind, value = 'cancelled', ''
+            if kind in ('progress', 'note') and state.get('job') and state['job'].cancelled.is_set(): continue
             if kind == 'progress': status.set(value)
             elif kind == 'note': state['note'] = value
             else:
                 state['busy'] = False; progress.stop(); start_button.config(state='normal')
-                if kind == 'setup_done':
+                cancel_button.config(state='disabled')
+                state['job'] = None
+                if state['closing']:
+                    root.destroy(); return
+                if kind == 'cancelled':
+                    status.set('処理を中止しました。完了済みの結果は保存先に残ります。送信済みAPI処理の料金は取り消せない場合があります。')
+                    if state['report']: result_button.config(state='normal')
+                elif kind == 'setup_done':
                     status.set(value)
                 elif kind == 'done':
-                    state['report'], text = value
+                    report, text = value
+                    state['report'] = Path(report)
                     status.set(text + ' ' + state.get('note', ''))
                     result_button.config(state='normal'); open_result()
                 else:
@@ -413,7 +363,8 @@ def main():
         root.after(200, poll)
     def close():
         if state['busy']:
-            messagebox.showinfo('分析中', '分析が終了してから閉じてください。'); return
+            state['closing'] = True
+            cancel(); return
         root.destroy()
     root.protocol('WM_DELETE_WINDOW', close)
     poll(); root.mainloop()
