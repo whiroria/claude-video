@@ -41,6 +41,34 @@ def build_command(source, transcript, title, offline, output):
     return cmd
 
 
+def failure_details(stdout, stderr, api_key=''):
+    messages = []
+    for line in stdout.splitlines():
+        try:
+            data = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get('error'):
+            messages.append(str(data['error']))
+    raw = '\n'.join(messages + [stderr[-8000:]])
+    if api_key:
+        raw = raw.replace(api_key, '[APIキー非表示]')
+    raw = re.sub(r'(?im)^.*(?:incorrect api key|authorization:|api[_ -]?key\s*[=:]).*$', '[認証情報を含む行は非表示]', raw)
+    raw = re.sub(r'sk-[A-Za-z0-9_*.-]+', '[APIキー非表示]', raw)
+    lower = raw.lower()
+    if 'yt-dlp is not installed' in lower:
+        hint = '動画取得ソフト yt-dlp が見つかりません。'
+    elif 'sign in' in lower or 'not a bot' in lower:
+        hint = 'YouTube側でログイン確認などが求められ、動画を取得できませんでした。'
+    elif '403' in lower or '429' in lower:
+        hint = '取得先またはAPIがリクエストを拒否しました。詳細の発生元を確認してください。'
+    elif 'private video' in lower or 'video unavailable' in lower:
+        hint = '指定した動画を取得できませんでした。公開状態とURLを確認してください。'
+    else:
+        hint = '処理を完了できませんでした。以下の詳細を確認してください。'
+    return hint + '\n\n' + (raw.strip() or '詳細が取得できませんでした。')[-8000:]
+
+
 def selected_source(video, url):
     video, url = video.strip(), url.strip()
     if not video and not url:
@@ -159,10 +187,7 @@ def main():
             # Keep complete child logs off disk: an API error may echo part of a key.
             result = subprocess.run(cmd, cwd=SCRIPTS, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             if result.returncode or not output.exists():
-                detail = '処理を完了できませんでした。動画・字幕・ffmpegの設定を確認してください。'
-                if 'cp932' in result.stderr: detail = '文字コードの処理に失敗しました。'
-                if 'ffmpeg' in result.stdout + result.stderr: detail += ' ffmpegが利用できるか確認してください。'
-                raise RuntimeError(detail)
+                raise RuntimeError(failure_details(result.stdout, result.stderr, env.get('OPENAI_API_KEY', '')))
             # Keep credential fragments out of the delivered JSON and HTML.
             data = json.loads(output.read_text(encoding='utf-8'))
             attach_reference(data, reference_url)
@@ -231,6 +256,19 @@ def main():
     result_button.grid(row=12, column=1, pady=16, sticky='w')
     ttk.Button(frame, text='保存先を開く', command=open_folder).grid(row=12, column=2, pady=16)
     ttk.Label(frame, text='結果の保存先：' + str(OUTPUT), wraplength=740).grid(row=13, column=0, columnspan=3, sticky='w')
+    def show_failure(detail):
+        window = tk.Toplevel(root)
+        window.title('エラーの詳細')
+        window.geometry('760x420')
+        box = ScrolledText(window, wrap='word')
+        box.pack(fill='both', expand=True, padx=12, pady=12)
+        box.insert('1.0', detail)
+        box.configure(state='disabled')
+        def copy():
+            root.clipboard_clear()
+            root.clipboard_append(detail)
+        ttk.Button(window, text='詳細をコピー', command=copy).pack(pady=(0, 12))
+
     def poll():
         while not events.empty():
             kind, value = events.get()
@@ -242,7 +280,9 @@ def main():
                     state['report'], text = value
                     status.set(text + ' ' + state.get('note', ''))
                     result_button.config(state='normal'); open_result()
-                else: status.set(value)
+                else:
+                    status.set(value.splitlines()[0] + ' 詳細ウィンドウの「詳細をコピー」で内容を共有できます。')
+                    show_failure(value)
         root.after(200, poll)
     def close():
         if state['busy']:
