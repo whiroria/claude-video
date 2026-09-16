@@ -170,6 +170,8 @@ def main():
     field(settings, 3, 'model', '音声モデル（任意）', [('YAMNet ONNX', '*.onnx')])
     field(settings, 4, 'labels', '音声ラベル（任意）', [('YAMNet class map', '*.csv')])
     ttk.Label(settings, text='音声の区間推定には上の2ファイルと numpy / onnxruntime が必要です。\n空欄でも、台本・画面切替・音量などの基本分析は実行できます。', wraplength=690).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
+    detailed = tk.BooleanVar(value=False)
+    ttk.Checkbutton(inputs, text='全編詳細分析（60秒ごとに4枚・追加API料金と待ち時間が発生）', variable=detailed).grid(row=5, column=0, columnspan=3, sticky='w', pady=6)
     status = tk.StringVar(value='動画ファイルかYouTube URLを指定してください。字幕は選択中のタブの入力だけを使います。')
     ttk.Label(frame, textvariable=status, wraplength=740).grid(row=10, column=0, columnspan=3, sticky='w', pady=12)
     progress = ttk.Progressbar(frame, mode='indeterminate')
@@ -182,7 +184,7 @@ def main():
         OUTPUT.mkdir(parents=True, exist_ok=True)
         if sys.platform == 'win32': os.startfile(str(OUTPUT))
         else: webbrowser.open(OUTPUT.as_uri())
-    def run_job(cmd, env, output, model, labels, source, reference_url):
+    def run_job(cmd, env, output, model, labels, source, reference_url, use_detailed):
         try:
             # Keep complete child logs off disk: an API error may echo part of a key.
             result = subprocess.run(cmd, cwd=SCRIPTS, env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -190,6 +192,8 @@ def main():
                 raise RuntimeError(failure_details(result.stdout, result.stderr, env.get('OPENAI_API_KEY', '')))
             # Keep credential fragments out of the delivered JSON and HTML.
             data = json.loads(output.read_text(encoding='utf-8'))
+            from vea.detailed_review import attach_previews, review
+            attach_previews(data)
             attach_reference(data, reference_url)
             for error in data.get('errors', []):
                 message = str(error.get('message', ''))
@@ -207,6 +211,16 @@ def main():
                 audio = subprocess.run([sys.executable, '-X', 'utf8', str(SCRIPTS / 'vea' / 'audio_timeline.py'), source, '--result', str(output), '--model', model, '--labels', labels, '--seconds', str(duration), '--out', str(audio_out)], cwd=SCRIPTS, env=env, capture_output=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                 if audio.returncode == 0: output = audio_out
                 else: events.put(('note', '音声の区間推定は失敗しました。基本分析の結果を表示します。'))
+            if use_detailed:
+                data = json.loads(output.read_text(encoding='utf-8'))
+                frames = [e for e in data.get('timeline', []) if e.get('event_type') == 'frame']
+                video = frames[0].get('provenance', {}).get('source') if frames else None
+                if video and Path(video).is_file():
+                    data = review(data, video, output, lambda text: events.put(('progress', text)), api_key=env.get('OPENAI_API_KEY'))
+                    if any(e['status'] != 'ok' for e in data['detailed_review']['intervals']):
+                        events.put(('note', '全編詳細分析に未完了の区間があります。結果画面で確認してください。'))
+                else:
+                    events.put(('note', '全編詳細分析用の動画が見つかりません。基本分析を表示します。'))
             report = output.parent / 'report.html'
             data = make_report(output, report)
             issues = [str(e.get('module', '処理')) for e in data.get('errors', [])]
@@ -238,6 +252,8 @@ def main():
             from openai_analysis import load_openai_api_key
             key = v['key'] or load_openai_api_key()
             if not offline.get() and not key: raise ValueError('APIキーを入力するか「ローカル計測のみ」にチェックしてください。')
+            if detailed.get() and offline.get():
+                raise ValueError('全編詳細分析はAIを使います。「ローカル計測のみ」を外してください。')
             env = dict(os.environ, PYTHONUTF8='1')
             if key: env['OPENAI_API_KEY'] = key
             output.parent.mkdir(parents=True, exist_ok=True)
@@ -248,7 +264,7 @@ def main():
             start_button.config(state='disabled'); result_button.config(state='disabled')
             status.set('分析中です。動画の取得・映像の計測・AIの応答待ちには数分以上かかることがあります。')
             progress.start()
-            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url']), daemon=True).start()
+            threading.Thread(target=run_job, args=(cmd, env, output, v['model'], v['labels'], v['source'], v['url'], detailed.get()), daemon=True).start()
         except (ValueError, OSError) as exc: messagebox.showerror('入力を確認してください', str(exc))
     start_button = ttk.Button(frame, text='分析する', command=start)
     start_button.grid(row=12, column=0, pady=16, sticky='w')
