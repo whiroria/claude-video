@@ -207,6 +207,8 @@ def main():
     state = {'busy': False, 'report': None}
     def open_result():
         if state['report']: webbrowser.open(state['report'].as_uri())
+    def open_comparison():
+        webbrowser.open((SKILL / 'result-viewer.html').as_uri() + '#compare')
     def open_folder():
         OUTPUT.mkdir(parents=True, exist_ok=True)
         if sys.platform == 'win32': os.startfile(str(OUTPUT))
@@ -376,6 +378,7 @@ def main():
     start_button.grid(row=12, column=0, pady=16, sticky='w')
     result_button = ttk.Button(frame, text='結果を開く', command=open_result, state='disabled')
     result_button.grid(row=12, column=1, pady=16, sticky='w')
+    ttk.Button(frame, text='動画を比較する', command=open_comparison).grid(row=14, column=1, pady=6, sticky='w')
     ttk.Button(frame, text='保存先を開く', command=open_folder).grid(row=12, column=2, pady=16)
     ttk.Label(frame, text='結果の保存先：' + str(OUTPUT), wraplength=740).grid(row=13, column=0, columnspan=3, sticky='w')
     def show_failure(detail):

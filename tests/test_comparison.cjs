@@ -1,0 +1,31 @@
+// Run with Node and jsdom installed: node tests/test_comparison.cjs
+const {JSDOM,VirtualConsole}=require('jsdom');
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const errors=[],console=new VirtualConsole();console.on('jsdomError',e=>errors.push(e.message));
+const dom=new JSDOM(fs.readFileSync(path.join(__dirname,'../skills/watch/result-viewer.html'),'utf8'),{runScripts:'dangerously',url:'https://local.invalid/#compare',virtualConsole:console});
+const w=dom.window,d=w.document;
+const fixture=(id)=>({run_id:id,video_id:id,metadata:{title:id,duration_ms:10000},modules:{script:{status:'ok'}},model_analyses:{video_essay:{result:{hook:{first_30_seconds:'問いを提示',evidence:['[00:02] 引用']},research:{meaning_sections:[{role:'main_topic',label:'主題',purpose:'因果を説明',start_ms:null,end_ms:null}]},reusable_patterns:['問いを最後に回収'],improvements:[{recommendation:'事例を追加',rationale:'理解を助ける'}]}}},features:{music_ratio:{status:'ok',value:0}}});
+const file=x=>({name:'result.json',size:100,text:async()=>JSON.stringify(x)});
+(async()=>{
+ await w.load([file(fixture('one')),file(fixture('two')),file(fixture('three')),file(fixture('four')),file(fixture('five'))]);
+ assert.equal(d.querySelectorAll('#comparePicker input:checked').length,3);
+ assert.equal(d.querySelectorAll('#compareTable thead th').length,4);
+ assert.equal(d.querySelector('#tab-comparison').getAttribute('aria-selected'),'true');
+ assert.match(d.querySelector('#compareTable').textContent,/音楽の検出割合：0.0%/);
+ assert.match(d.querySelector('#compareTable').textContent,/声の検出割合：未計測/);
+ assert.match(d.querySelector('#compareTable').textContent,/因果を説明/);
+ assert.match(d.querySelector('#compareTable').textContent,/時刻の対応は未確定/);
+ const note=d.querySelector('#compareTable textarea');note.value='冒頭に問いを置く';note.dispatchEvent(new w.Event('input'));
+ let boxes=d.querySelectorAll('#comparePicker input');boxes[3].click();boxes=d.querySelectorAll('#comparePicker input');boxes[4].click();
+ assert.equal(d.querySelectorAll('#comparePicker input:checked').length,4);
+ assert.match(d.querySelector('#compareStatus').textContent,/4本まで/);
+ assert.equal(d.querySelector('#compareTable textarea').value,'冒頭に問いを置く');
+ d.querySelector('#compareDecision').value='次の歴史動画で試す';
+ assert.match(w.comparisonMarkdown(),/分析ID：one/);assert.match(w.comparisonMarkdown(),/次の歴史動画で試す/);assert.match(w.comparisonMarkdown(),/冒頭に問いを置く/);
+ await w.load([file(fixture('one'))]);assert.equal(d.querySelectorAll('#comparePicker input').length,5);
+ const malicious=fixture('<img src=x onerror="window.attack=true">');await w.load([file(malicious),{name:'bad.json',size:1,text:async()=>'{bad'}]);
+ assert.equal(w.attack,undefined);assert.equal(d.querySelectorAll('#comparePicker img').length,0);assert.match(d.querySelector('#fileErrors').textContent,/bad.json/);
+ d.querySelector('#compareTable thead button').click();assert.equal(d.querySelector('#videos').value,'0');assert.equal(d.querySelector('#tab-interpreted').getAttribute('aria-selected'),'true');
+ d.querySelector('#tab-comparison').click();assert.equal(d.querySelector('#compareTable textarea').value,'冒頭に問いを置く');
+ assert.deepEqual(errors,[]);dom.window.close();process.stdout.write('Comparison: selection, missing/zero data, notes, export, duplicate loading, safe text, and navigation OK\n');
+})().catch(e=>{process.stderr.write(e.stack+'\n');process.exitCode=1;dom.window.close()});
