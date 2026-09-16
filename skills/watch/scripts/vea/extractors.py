@@ -18,9 +18,12 @@ def run(args, binary=False):
 
 
 class FFmpegSceneDetector:
-    def __init__(self, threshold=0.3):
+    def __init__(self, threshold=0.3, top_fraction=1.0):
         if not 0 < threshold < 1:
             raise ValueError("Scene threshold must be between 0 and 1")
+        if not 0.25 <= top_fraction <= 1.0:
+            raise ValueError("Detection region must include 25–100% of the image height")
+        self.top_fraction = top_fraction
         self.threshold = threshold
 
     def detect(self, path, duration_ms):
@@ -32,7 +35,8 @@ class FFmpegSceneDetector:
                 str(path),
                 "-an",
                 "-vf",
-                f"select='gt(scene,{self.threshold})',showinfo",
+                (f"crop=iw:trunc(ih*{self.top_fraction}/2)*2:0:0," if self.top_fraction < 1 else "")
+                + f"select='gt(scene,{self.threshold})',showinfo",
                 "-f",
                 "null",
                 "-",
@@ -47,7 +51,7 @@ class FFmpegSceneDetector:
         )
         boundaries = [0, *cuts, duration_ms]
         p = provenance(
-            "ffmpeg_scene_threshold", str(path), {"threshold": self.threshold}
+            "ffmpeg_scene_threshold", str(path), {"threshold": self.threshold, "top_fraction": self.top_fraction, "interpretation": "detected boundaries, not verified shots"}
         )
         return [
             dict(
