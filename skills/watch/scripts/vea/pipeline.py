@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -394,6 +395,7 @@ def analyze(
             except (Exception, SystemExit) as exc:
                 errors.append({"module": "transcript", "message": str(exc)[:1000]})
     metadata["transcript_source"] = tsrc
+    metadata["whisper_language_requested"] = os.environ.get("WATCH_TRANSCRIPT_LANGUAGE", "auto") if (tsrc or "").startswith("whisper (") else None
     tp = (
         word_prov
         if tsrc == "whisperx"
