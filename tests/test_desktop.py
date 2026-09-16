@@ -47,12 +47,21 @@ def test_real_offline_analysis_and_report(tmp_path):
     assert data['modules']['editing']['status'] == 'ok'
 
 
-def test_source_selection_ignores_other_field(tmp_path):
+def test_source_selection_accepts_either_or_both(tmp_path):
     video = str(tmp_path / 'video.mp4')
-    assert desktop.selected_source('file', video, 'https://youtu.be/unused') == video
-    assert desktop.selected_source('url', video, 'https://youtu.be/selected') == 'https://youtu.be/selected'
+    url = 'https://youtu.be/selected'
+    assert desktop.selected_source(video, url) == video
+    assert desktop.selected_source(video, '') == video
+    assert desktop.selected_source('', url) == url
     with pytest.raises(ValueError):
-        desktop.selected_source('url', video, '')
+        desktop.selected_source('', '')
+    with pytest.raises(ValueError):
+        desktop.selected_source(video, 'invalid-url')
+    data = {'metadata': {'source': video, 'url': video}}
+    desktop.attach_reference(data, url)
+    assert data['metadata']['user_reference_url'] == url
+    assert data['metadata']['source'] == video
+    assert data['metadata']['url'] == video
 
 
 def test_pasted_subtitles_preserve_timing_and_plain_text(tmp_path):
