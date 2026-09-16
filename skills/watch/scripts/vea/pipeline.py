@@ -706,7 +706,6 @@ def analyze(
             )
             candidates = []
             catalog_complete = False
-            import os
 
             if (
                 vid.startswith("yt:")
