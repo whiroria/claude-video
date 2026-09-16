@@ -99,6 +99,18 @@ SCHEMA["properties"]["research"] = obj(
     }
 )
 SCHEMA["required"].append("research")
+SCHEMA["properties"]["transcript_quality"] = obj({
+    "summary": STRING,
+    "issues": array(obj({
+        "source_excerpt": STRING,
+        "category": {"type": "string", "enum": ["number", "proper_name", "term", "language", "other"]},
+        "reason": STRING,
+        "suggested_reading": {"type": ["string", "null"]},
+        "timestamp_ms": {"type": ["integer", "null"]},
+    })),
+})
+SCHEMA["required"].append("transcript_quality")
+
 INSTRUCTIONS = (
     ANALYSIS_INSTRUCTIONS
     + """
@@ -118,3 +130,9 @@ If metadata.is_excerpt is true, the clip ends artificially: do not treat its end
 If metadata.thumbnail_source is embedded_cover, the attached image is available for visual analysis, but it has not been verified against the live YouTube thumbnail. Label the source clearly and avoid claims about current packaging or actual CTR.
 """
 )
+
+INSTRUCTIONS += """
+Audit transcript quality separately from creator quality. In transcript_quality.issues, list only concrete suspected recognition problems supported by exact source_excerpt copied verbatim from the supplied transcript (never translate this field). Give a reason; suggested_reading is tentative, null if ambiguous. Do not silently repair numbers or names. Do not infer that the creator said a mistaken word from faulty ASR. An empty issues list is not verification of accuracy. Use null timestamps for untimed text; never fabricate alignment.
+In all research evidence, transcript_reference is a paraphrase/reference, not a certified verbatim quotation. Label translations and summaries accordingly. The original transcript is the only source text; never present reconstructed Japanese from English ASR as an original Japanese quote.
+Before recommending a missing explanation, check the entire transcript for it and acknowledge existing treatment. Do not claim absent on-screen citations, diagrams, or labels from unreadable or sparse images. Phrase unverified improvements conditionally, stating what needs checking.
+"""
